@@ -47,9 +47,9 @@ After I considered the position of description block, I decided put it at the ri
 
 ### Sketch
 
-- First Sketch: https://nantsou.github.io/visualize/first_sketch/index.html
-- Second Sketch: https://nantsou.github.io/visualize/second_sketch/index.html
-- Third Sketch: https://nantsou.github.io/visualize/third_sketch/index.html
+- [First Sketch](first_sketch)
+- [Second Sketch](second_sketch)
+- [Third Sketch](third_sketch)
 
 ### Revised
 
