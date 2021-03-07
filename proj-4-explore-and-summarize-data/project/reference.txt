@@ -1,0 +1,33 @@
+1.  wikipedia - Acids in wine
+https://en.wikipedia.org/wiki/Acids_in_wine
+
+2.  wikipedia - Sugars in wine
+https://en.wikipedia.org/wiki/Sugars_in_wine
+
+3. Waterhouse Lab - Fixed Acidity
+http://waterhouse.ucdavis.edu/whats-in-wine/fixed-acidity
+
+4. R ggcorr
+https://briatte.github.io/ggcorr/
+
+5. R geom_density
+http://www.cookbook-r.com/Graphs/Plotting_distributions_(ggplot2)/
+
+6. R ddply
+http://www.inside-r.org/packages/cran/plyr/docs/ddply
+
+7. Making plot functions with ggplot and aes_string
+http://stackoverflow.com/questions/10004847/making-plot-functions-with-ggplot-and-aes-string
+
+8. outliers handling
+http://stackoverflow.com/questions/4666590/remove-outliers-from-correlation-coefficient-calculation  (consult only)
+http://r-statistics.co/Outlier-Treatment-With-R.html
+http://stackoverflow.com/questions/4787332/how-to-remove-outliers-from-a-dataset
+http://stackoverflow.com/questions/24337714/using-a-repeat-loop-to-look-for-multiple-outliers
+http://rstudio-pubs-static.s3.amazonaws.com/7901_72d4736f412e4414b1aeffbd1d5c69e9.html
+http://www.r-bloggers.com/identify-describe-plot-and-remove-the-outliers-from-the-dataset/
+
+9. Plotting in R
+http://stackoverflow.com/questions/24826658/universal-x-axis-label-and-legend-at-bottom-using-grid-arrange
+http://stackoverflow.com/questions/11076567/plot-a-legend-and-well-spaced-universal-y-axis-and-main-titles-in-grid-arrange
+

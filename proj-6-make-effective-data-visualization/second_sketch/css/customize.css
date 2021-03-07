@@ -1,0 +1,135 @@
+body{
+    background-color: #f1eef6;
+}
+
+.detail_info {
+    position: absolute;
+    padding-left: 20px;
+    height: 600px;
+    width: 100%;
+    top: 0;
+    left: 0;
+}
+
+.detail_info .row {
+    margin: 0;
+}
+
+.detail_info:before, .detail_info:after {
+    content: "";
+    position: absolute;
+    top: -3px;
+    left: -3px;
+    z-index: -1;
+}
+
+.detail_info:before {
+    bottom: -3px;
+    width: 3px;
+    background-image: -webkit-gradient(linear, 0 0, 0 100%, from(#000), to(transparent));
+    background-image: -webkit-linear-gradient(#000, transparent);
+    background-image: -moz-linear-gradient(#000, transparent);
+    background-image: -o-linear-gradient(#000, transparent);
+
+}
+
+.detail_info:after {
+    right: -3px;
+    height: 3px;
+    background-image: -webkit-gradient(linear, 0 0, 100% 0, from(#000), to(transparent));
+    background-image: -webkit-linear-gradient(left, #000, transparent);
+    background-image: -moz-linear-gradient(left, #000, transparent);
+    background-image: -o-linear-gradient(left, #000, transparent);
+}
+
+table.map-pop tr.first-tr td {
+    border-bottom: 1px dashed black;
+}
+
+table.map-pop tr td.td-icon {
+    text-align: center;
+}
+
+table.map-pop tr td.td-val {
+    text-align: left;
+    padding:0 20px;
+    font-weight: bold;
+}
+
+table#map-icon-legend tr td.td-legend-icon {
+    text-align: center;
+    padding-left: 20px;
+}
+
+table#map-icon-legend tr td.td-legend-val {
+    text-align: left;
+    padding-left: 5px;
+    padding-right: 0;
+    font-weight: bold;
+}
+
+#map {
+    position: relative;
+    width: 100%;
+    height: 800px;
+    margin-top: 80px;
+}
+
+.doughnut-chart, .bar-chart {
+    position: relative;
+    float: left;
+}
+
+#doughnut-age {
+    width: 250px;
+    margin-top: 50px;
+    margin-left: 5px;
+}
+
+
+#bar-growth {
+    width: 400px;
+    margin-top: 50px;
+    margin-left: 80px;
+}
+
+table.map-color-legend tr td.td-legend-icon,
+table.bar-icon-legend tr td.td-legend-icon,
+table.doughnut-icon-legend tr td.td-legend-icon {
+    text-align: center;
+}
+
+table.map-color-legend tr td.td-legend-val,
+table.bar-icon-legend tr td.td-legend-val,
+table.doughnut-icon-legend tr td.td-legend-val {
+    text-align: left;
+    padding-left: 5px;
+    padding-right: 0;
+    font-weight: bold;
+    font-size: 9pt;
+}
+
+.descriptions {
+    clear:left;
+}
+
+.descriptions p {
+    margin: 0;
+}
+
+footer {
+    clear: both;
+    padding-bottom: 25px;
+}
+
+hr.style-gradient {
+    border: 0;
+    height: 1px;
+    background-image: linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0));
+}
+
+hr.style-shadow {
+    height: 12px;
+    border: 0;
+    box-shadow: inset 0 12px 12px -12px rgba(0, 0, 0, 0.5);
+}

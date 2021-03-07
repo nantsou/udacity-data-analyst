@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Population in Japan</title>
+  <meta charset="utf-8">
+  <meta content="width=device-width, initial-scale=1" name="viewport">
+  <link href="css/bootstrap.min.css" rel="stylesheet">
+  <link href="css/font-awesome.min.css" rel="stylesheet">
+  <link href="css/customize.css" rel="stylesheet">
+  <script type="text/javascript" src="js/jquery-1.12.4.min.js"></script>
+  <script type="text/javascript" src="js/bootstrap.min.js"></script>
+  <script type="text/javascript" src="js/colorbrewer.min.js"></script>
+  <script type="text/javascript" src="js/d3.v3.min.js"></script>
+  <script type="text/javascript" src="js/topojson.min.js"></script>
+  <script type="text/javascript" src="js/datamaps.jpn.min.js"></script>
+  <script type="text/javascript" src="js/customize.js"></script>
+</head>
+<body>
+<div class="container"  style="position:relative;">
+  <div id="population">
+    <div class="row">
+      <h1>Population Structure of Japan In 2014</h1>
+    </div>
+    <div class="row">
+      <div style="position:relative;">
+        <div class="detail_info">
+          <div class="row"><h2 class="prefecture_name">Japan</h2></div>
+          <div class="row">
+            <div id="doughnut-age" class="doughnut-chart"></div>
+            <div id="bar-growth" class="bar-chart"></div>
+            <div id="population-descriptions" class="descriptions">
+              <h3>Population Descriptions</h3>
+              <p>According to the population census of Japan in 2014, the total population is <strong>127 M</strong> people. </p>
+              <p>With the information above, population growth is <strong>negative</strong>.</p>
+              <p>Natural increase (Births - Deaths) of almost prefectures are also <strong>negative</strong>.</p>
+              <p>Besides, about 27% of population is over 65 years old.</p>
+              <p>In some prefectures, over 30% population is over 65 years old.</p>
+              <p>Like <i class="fa fa-circle" style="color: #54278f"></i><strong>Akita</strong>,
+                <i class="fa fa-circle" style="color: #dd3497"></i><strong>Toyama</strong>,
+                <i class="fa fa-circle" style="color: #35978f"></i><strong>Shimane</strong> and
+                <i class="fa fa-circle" style="color: #bf812d"></i><strong>Yamaguchi</strong></p>
+              <p>However, this phenomena does not surprises me</p>
+              <p>because of <strong>decreasing birth rate and aging population</strong> of Japan.</p>
+              <p>But, <i class="fa fa-circle" style="color: #1f78b4"></i><strong>Aichi</strong> and
+                <i class="fa fa-circle" style="color: #00441b"></i><strong>Okinawa</strong>
+                have <strong>positive</strong> natural increase.</p>
+              <p>Most prefectures with positive population growth </p>
+              <p>are contributed by the Immigrants, such as <i class="fa fa-circle" style="color: #92c5de"></i><strong>Tokyo</strong>
+                , <i class="fa fa-circle" style="color: #4d4d4d"></i><strong>Saitama</strong></p>
+              <p>  and <i class="fa fa-circle" style="color: #b2df8a"></i><strong>Kanagawa</strong>,
+              which are the most crowed area in east Japan,</p>
+              <p> especially for Tokyo, the capital of Japan.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <div id="map"></div>
+    </div>
+  </div>
+</div>
+<hr class="style-shadow">
+<footer>
+  <div class="container">
+    <div align="middle">
+      <a href="https://github.com/ddrsmile/visualize" TARGET = "_blank"><img src="img/GitHub-Mark-120px-plus.png" width="64px" height="64px"></a>
+    </div>
+  </div>
+</footer>
+<script>
+    d3.csv("data/data.csv", function(error, data){
+        var collected_data = collect_data(data);
+        create_graph(collected_data);
+    });
+</script>
+</body>
+</html>

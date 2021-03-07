@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Population in Japan</title>
+  <meta charset="utf-8">
+  <meta content="width=device-width, initial-scale=1" name="viewport">
+  <link href="css/bootstrap.min.css" rel="stylesheet">
+  <link href="css/font-awesome.min.css" rel="stylesheet">
+  <link href="css/customize.css" rel="stylesheet">
+  <script type="text/javascript" src="js/jquery-1.12.4.min.js"></script>
+  <script type="text/javascript" src="js/bootstrap.min.js"></script>
+  <script type="text/javascript" src="js/colorbrewer.min.js"></script>
+  <script type="text/javascript" src="js/d3.v3.min.js"></script>
+  <script type="text/javascript" src="js/topojson.min.js"></script>
+  <script type="text/javascript" src="js/d3-legend.min.js"></script>
+  <script type="text/javascript" src="js/datamaps.jpn.min.js"></script>
+  <script type="text/javascript" src="js/customize.js"></script>
+</head>
+<body>
+<div class="container"  style="position:relative; padding-top: 10px;">
+  <!--
+  <div class="row">
+    <div class="navbar-wrapper">
+      <nav class="navbar navbar-inverse" role="navigation">
+        <div class="navbar-header">
+          <a id="nav-population" class="navbar-brand nav-active" href="#">POPULATION</a>
+          <a id="nav-economics" class="navbar-brand" href="#">ECONOMICS</a>
+        </div>
+      </nav>
+    </div>
+  </div>
+  -->
+  <div class="row">
+    <h1>Population Structure of Japan In 2014</h1>
+  </div>
+  <div class="row">
+    <div style="position:relative;">
+      <div id="detail_info">
+        <div class="row"><h2 class="prefecture_name">Japan</h2></div>
+        <div class="row">
+          <div id="pie-chart"></div>
+          <div id="bullet-chart"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="row">
+    <div id="map"></div>
+  </div>
+</div>
+<hr class="style-shadow">
+<footer>
+  <div class="container">
+    <div align="middle">
+      <a href="https://github.com/ddrsmile/visualize" TARGET = "_blank"><img src="img/GitHub-Mark-120px-plus.png" width="64px" height="64px"></a>
+    </div>
+  </div>
+</footer>
+<script>
+    $(document).ready(function() {
+      create_graph('population')
+
+      $(".navbar  a").on('click', function() {
+        // highlight the tab that the reader clicks.
+        $(this).siblings().removeClass("nav-active");
+        $(this).addClass("nav-active");
+
+        // Clear the existing map.
+        $('div#map').children().remove();
+        $('div#pie-chart').children().remove();
+        $('div#bullet-chart').children().remove();
+
+        // recreate the map
+        topic = $(this).attr('id').split("-")[1];
+        create_graph(topic)
+
+      });
+
+    });
+</script>
+</body>
+</html>

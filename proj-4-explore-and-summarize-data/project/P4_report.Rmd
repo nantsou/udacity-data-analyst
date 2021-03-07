@@ -1,0 +1,2769 @@
+---
+title: "Data Exploratory of Red/White Wine Quality"
+author: "Nan-Tsou Liu"
+date: "May 19, 2016"
+output: 
+  html_document:
+  fig_width: 12
+  fig_height: 8
+---
+
+***
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+# Load required packages
+library(ggplot2)
+library(plyr)
+library(GGally)
+library(grid)
+library(gtable)
+library(gridExtra)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, function_for_simplifying_code}
+# This function return the basic plot of histogram with the normal distribution in density format.
+plot_histogarm_with_norm <- function(wine_data, x, norm_data, 
+                                     binwidth, opts=NULL) {
+  ggplot(data = wine_data, aes_string(x = x)) +
+    geom_histogram( aes(y = ..density.., fill = color), 
+                 binwidth = binwidth) + 
+    geom_line(data = norm_data, aes(x = grid, y = density, fill = color), 
+            lwd = 1) +
+    scale_fill_manual(values = colours_wine) +
+    guides(fill=FALSE) +
+    facet_wrap(~ color, scales = "free")
+}
+
+# This function return the basic plot of scatter plot with regression line.
+plot_scatter_with_regression_line <- function(wine_data, x, y, z, opts=NULL) {
+  ggplot(wine_data, aes_string(x = x, y = y, fill = z)) +
+    geom_point(alpha = 0.5, position = position_jitter(h = 0), 
+               size = 1, color = "black", shape = 21) +
+    geom_smooth(method = 'lm', aes_string(color = z))
+}
+
+# This function create the data of normal distribution in density format.
+get_dnorm <- function(df, target) {
+  # get the sequence of plot by using min and max of the target
+  grid_tmp = seq(min(df[target]), max(df[target]), length=nrow(df[target]))
+  
+  # get mean and standard deivation of target
+  stat_tmp <- sapply(df[target], 
+                     function(cl) list(means=mean(cl,na.rm=TRUE), 
+                                       sds=sd(cl,na.rm=TRUE)))
+  data.frame(
+    grid = grid_tmp,
+    
+    # get the density profile of the target
+    density = dnorm(grid_tmp, as.numeric(stat_tmp[1]), as.numeric(stat_tmp[2])),
+    
+    # set the density profile to red wine or white wine
+    color = df$color
+  )
+}
+
+# This function return a data set of the density profile.
+get_dnorm_data_set <- function(df, target) {
+  red_dnorm <- get_dnorm(subset(df, color=="red"),
+                       target)
+  white_dnorm <- get_dnorm(subset(df, color=="white"), 
+                         target)
+  wine_single_dnorm <- rbind(red_dnorm, white_dnorm)
+}
+
+# This function removes the outliers by the group of wine's color or qulaity level
+# c: color;  q: quality_level
+remove_outliers_cq <- function(x, classifier, na.rm = TRUE, ...) {
+  # initiate the data frame to storge the min and max values to check outliers
+  check_outlier <- data.frame(classes = character(), 
+                              min_val= numeric(), 
+                              max_val= numeric(), 
+                              stringsAsFactors=F)
+  
+  # set the classes and iter_max based on classifier
+  iter_max = 0
+  if (classifier == "c") {
+    classes <- c("red", "white")  
+    iter_max = 2
+  } else if (classifier == "q") {
+    classes <- c("Low", "Medium", "High")  
+    iter_max = 3
+  }
+  
+  # the function of quantile can not take the data in data frame
+  tmp <- vector('numeric')
+  
+  # set the flag to break the iteration
+  have_outlier = TRUE
+  
+  while (have_outlier) {
+    # # assume every outliers will be removed in this loop.
+    have_outlier = FALSE
+    
+    for(i in seq(from = 1, to = iter_max)) {
+    
+      tmp <- as.numeric(unlist(subset(x[1], x[2] == classes[i])))
+    
+      # if there is no data, set the value to NA and skip the iteration.
+      if (length(tmp) == 0) {
+        check_outlier[i,] <- c(classes[i], NA, NA) 
+        next
+      }
+    
+      # transform tmp from list to vector
+      tmp <- as.numeric(unlist(tmp))
+    
+      # This part is to calculate the min and max value used to check whether
+      # the value is outlier or not
+      # The formula is outlier < Q1 - 1.5*IQR or outlier > Q3 + 1.5*IQR
+      qnt <- quantile(tmp, probs=c(.25, .75), na.rm = na.rm, ...)
+      H <- 1.5 * IQR(tmp, na.rm = na.rm)
+      check_outlier[i,] <- c(classes[i], qnt[1] - H, qnt[2] + H)
+    }
+  
+    # This part is to replace the outliers with NA
+    for (i in 1:nrow(x)) {
+      chk_val <- as.numeric(c(0.0, 0.0))
+
+      if (classifier == "c") {
+        switch(as.character(x[i,2]),
+          red={
+            chk_val[1] <- as.numeric(check_outlier[1,2])
+            chk_val[2] <- as.numeric(check_outlier[1,3])
+          },
+          white={
+            chk_val[1] <- as.numeric(check_outlier[2,2])
+            chk_val[2] <- as.numeric(check_outlier[2,3])
+          })
+      } else if (classifier == "q") {
+        switch(as.character(x[i,2]),
+          Low={
+            chk_val[1] <- as.numeric(check_outlier[1,2])
+            chk_val[2] <- as.numeric(check_outlier[1,3])
+          },
+          Medium={
+            chk_val[1] <- as.numeric(check_outlier[2,2])
+            chk_val[2] <- as.numeric(check_outlier[2,3])
+          },
+          High={
+            chk_val[1] <- as.numeric(check_outlier[3,2])
+            chk_val[2] <- as.numeric(check_outlier[3,3])
+          })
+      }
+    
+      if ((is.na(x[i, 1] ) | is.na(chk_val[1])) | (is.na(chk_val[2]))) {
+        next
+      }
+    
+      if ((x[i, 1] < chk_val[1]) | (x[i, 1] > chk_val[2])) {
+        x[i, 1] <- NA
+        # set to TRUE if there is a outlier.
+        have_outlier = TRUE
+      } 
+    }
+  }
+  rm(check_outlier, tmp)
+  x
+}
+
+# This function return the data processed outlier handling by group of quality level and color
+remove_outliers_color_or_quality_level <- function(x, feature, classifier) {
+  if (classifier == "c") {
+    classes = "color"
+  } else if (classifier == "q") {
+    classes = "quality_level"
+  }
+  
+  red_f_ql <- subset(x[,c(feature, classes)], x$color == "red")
+  red_f_ql <- remove_outliers_cq(red_f_ql,classifier)
+  
+  white_f_ql <- subset(x[,c(feature, classes)], x$color == "white")
+  white_f_ql <- remove_outliers_cq(white_f_ql,classifier)
+
+  wine_data_set <- rbind(red_f_ql, white_f_ql)[, c(feature)]
+
+  wine_data_set
+}
+
+# This function remove the outliers by the group of quality
+remove_outliers_quality <- function(x, na.rm = TRUE, ...) {
+  # initiate the data frame to storge the min and max values to check outliers
+  check_outlier <- data.frame(quality = numeric(0), min_val= numeric(0), max_val= numeric(0))
+  
+  # the function of quantile can not take the data in data frame
+  tmp <- vector('numeric')
+  
+  # set the flag to break the iteration
+  have_outlier = TRUE
+  
+  while (have_outlier) {
+  
+    # assume every outliers will be removed in this loop.
+    have_outlier = FALSE
+    
+    # Loop of all number of the quality 3 to 9
+    # It should be 1 to 10. However, we know the minimum quality is 3 and maximum quality is 9.
+    for(i in seq(from=3, to=9)) {
+      tmp <- as.numeric(unlist(subset(x[1], x[2] == i)))
+      if (length(tmp) == 0) {
+        check_outlier[i,] <- c(i, NA, NA) 
+        next
+      }
+      
+      # transform tmp from list to vector
+      tmp <- as.numeric(unlist(tmp))
+      
+      # This part is to calculate the min and max value used to check whether
+      # the value is outlier or not
+      # The formula is outlier < Q1 - 1.5*IQR or outlier > Q3 + 1.5*IQR
+      qnt <- quantile(tmp, probs=c(.25, .75), na.rm = na.rm, ...)
+      H <- 1.5 * IQR(tmp, na.rm = na.rm)
+      check_outlier[i,] <- c(i, qnt[1] - H, qnt[2] + H) 
+    }
+    
+    for (i in 1:nrow(x)) {
+      if ((is.na(x[i, 1] ) | is.na(check_outlier[x[i, 2],2])) | (is.na(check_outlier[x[i, 2],3]))) {
+        next
+      }
+      if ((x[i, 1] < check_outlier[x[i, 2], 2]) | (x[i, 1] > check_outlier[x[i, 2], 3])) {
+          x[i, 1] <- NA
+          have_outlier = TRUE
+      }
+    }
+  }
+  rm(check_outlier, tmp)
+  x
+}
+
+# This function return the data processed bivariately outlier handling by group of quality level and color
+remove_outliers_quality_color <- function(x, feature) {
+  red_f_ql <- subset(x[,c(feature, "quality")], x$color == "red")
+  red_f_ql <- remove_outliers_quality(red_f_ql)
+
+  white_f_ql <- subset(x[,c(feature,"quality")], x$color == "white")
+  white_f_ql <- remove_outliers_quality(white_f_ql)
+
+  wine_data_set <- rbind(red_f_ql, white_f_ql)[, c(feature)]
+  wine_data_set
+}
+
+
+# This function report the statistic infomation
+report_statistic_info <- function(summary_o, sd_o, summary_no, sd_no) {
+  cat("Red Wine:\n",
+  "--------------------------------------------------------\n",
+  "with outliers\n", 
+  "Min.\t1st Qu.\tMedian\tMean\t3rd Qu.\tMax.\t SD\n",
+  round(summary_o[1,2],3),"\t",
+  round(summary_o[1,3],3),"\t",
+  round(summary_o[1,4],3),"\t",
+  round(summary_o[1,5],3),"\t",
+  round(summary_o[1,6],3),"\t",
+  round(summary_o[1,7],3),"\t",
+  round(sd_o[1,2],3),"\n",
+  "--------------------------------------------------------\n",
+  "with outliers\n", 
+  "Min.\t1st Qu.\tMedian\tMean\t3rd Qu.\tMax.\t SD\n",
+  round(summary_no[1,2],3),"\t",
+  round(summary_no[1,3],3),"\t",
+  round(summary_no[1,4],3),"\t",
+  round(summary_no[1,5],3),"\t",
+  round(summary_no[1,6],3),"\t",
+  round(summary_no[1,7],3),"\t",
+  round(sd_no[1,2],3),"\n",
+  "==================================================================\n",
+  "White Wine:\n",
+  "--------------------------------------------------------\n",
+  "with outliers\n", 
+  "Min.\t1st Qu.\tMedian\tMean\t3rd Qu.\tMax.\t SD\n",
+  round(summary_o[2,2],3),"\t",
+  round(summary_o[2,3],3),"\t",
+  round(summary_o[2,4],3),"\t",
+  round(summary_o[2,5],3),"\t",
+  round(summary_o[2,6],3),"\t",
+  round(summary_o[2,7],3),"\t",
+  round(sd_o[2,2],3),"\n",
+  "--------------------------------------------------------\n",
+  "without outliers\n", 
+  "Min.\t1st Qu.\tMedian\tMean\t3rd Qu.\tMax.\t SD\n",
+  round(summary_no[2,2],3),"\t",
+  round(summary_no[2,3],3),"\t",
+  round(summary_no[2,4],3),"\t",
+  round(summary_no[2,5],3),"\t",
+  round(summary_no[2,6],3),"\t",
+  round(summary_no[2,7],3),"\t",
+  round(sd_no[2,2],3),"\n")
+}
+
+# This function report the statistic infomation
+report_corr_info <- function(corr_c, corr_ql) {
+  cat(
+  "Grouped by Wine's Color\n", 
+  "color\t corr\n",
+  "-------------------------------\n",
+  as.character(corr_c[1,1]),"\t",
+  round(corr_c[1,2],3),"\n",
+  as.character(corr_c[2,1]),"\t",
+  round(corr_c[2,2],3),"\n",
+  "===============================\n",
+  "Grouped by Quality Level and Wine's Color\n", 
+  "color\t corr\n",
+  "-------------------------------\n",
+  as.character(corr_ql[1,1]),"\t",
+  round(corr_ql[1,2],3),"\n",
+  as.character(corr_ql[2,1]),"\t",
+  round(corr_ql[2,2],3),"\n")
+}
+
+# This function report the correlation infomation grouped by quality level
+report_corr_info_ql <- function(corr_c, corr_ql) {
+  cat(
+  "===============================================\n",
+  "Grouped by Wine's Color\n", 
+  "color\t|\tquality level\t  corr\n",
+  "----------------------------------------------\n",
+  "\t\t|\t",as.character(corr_c[1,2]),"\t\t\t",
+  round(corr_c[1,3],3),"\n",
+  "Red\t\t|\t",as.character(corr_c[2,2]),"\t\t",
+  round(corr_c[2,3],3),"\n",
+  "\t\t|\t",as.character(corr_c[3,2]),"\t\t\t",
+  round(corr_c[3,3],3),"\n",
+  "----------------------------------------------\n",
+  "\t\t|\t",as.character(corr_c[1,2]),"\t\t\t",
+  round(corr_c[4,3],3),"\n",
+  "White\t|\t",as.character(corr_c[2,2]),"\t\t",
+  round(corr_c[5,3],3),"\n",
+  "\t\t|\t",as.character(corr_c[3,2]),"\t\t\t",
+  round(corr_c[6,3],3),"\n",
+  "==============================================\n",
+  "Grouped by Quality Level and Wine's Color\n", 
+  "color\t|\tquality level\t  corr\n",
+  "----------------------------------------------\n",
+  "\t\t|\t",as.character(corr_ql[1,2]),"\t\t\t",
+  round(corr_ql[1,3],3),"\n",
+  "Red\t\t|\t",as.character(corr_ql[2,2]),"\t\t",
+  round(corr_ql[2,3],3),"\n",
+  "\t\t|\t",as.character(corr_ql[3,2]),"\t\t\t",
+  round(corr_ql[3,3],3),"\n",
+  "----------------------------------------------\n",
+  "\t\t|\t",as.character(corr_ql[1,2]),"\t\t\t",
+  round(corr_ql[4,3],3),"\n",
+  "White\t|\t",as.character(corr_ql[2,2]),"\t\t",
+  round(corr_ql[5,3],3),"\n",
+  "\t\t|\t",as.character(corr_ql[3,2]),"\t\t\t",
+  round(corr_ql[6,3],3),"\n",
+  "===============================================\n")
+}
+```
+
+```{r echo=FALSE, Load_the_Data}
+# Temporary path seting 
+#setwd("/Users/Joey/Documents/Data_Analyst_Nanodegree/P4_Explore_and_Summarize_Data/project")
+
+# load the data
+red <- read.csv('wineQualityReds.csv')
+white <- read.csv('wineQualityWhites.csv')
+
+# set color flag to each data set.
+red$color = 'red'
+white$color = 'white'
+
+# merge red wine and white wine datasets
+wine_data <- rbind(red, white)
+
+# transform color from the characters to a factor
+wine_data$color = factor(wine_data$color)
+
+# create rating variable with 3 classes
+wine_data$quality_level <- cut(wine_data$quality, 
+ breaks = c(quantile(wine_data$quality, prob =   0), 
+            quantile(wine_data$quality, prob = 1/3), 
+            quantile(wine_data$quality, prob = 2/3), 
+            quantile(wine_data$quality, prob =   1)),
+ labels = c("Low", "Medium", "High"),include.lowest=TRUE)
+
+# create total acidity (= fixed acidity + volatile acidity) and put it before quality
+wine_data <- as.data.frame(append(wine_data, 
+                     list(total.acidity = 
+                            wine_data$fixed.acidity + wine_data$volatile.acidity), 
+                     after = 12))
+
+# define the color of wine and quality level
+colours_wine = c("red" = "#b2182b", "white" = "#2166ac")
+colours_quality = c("High" = "#b2182b", "Medium" = "#fb9800", "Low" = "#2166ac")
+
+```
+
+
+```{r echo=FALSE, outlier_handling}
+# remove outlier by the group of color
+wine_data_no_color <- wine_data
+
+# remove outlier by the group of color and quality level
+wine_data_no_quality_level <- wine_data
+
+# remove outlier by the group of color and quality
+wine_data_no_quality <- wine_data
+column_names <- names(wine_data[,2:13])
+
+# CUATION!! REMOVING OUTLIER TAKES MORE TIME!!
+# CUATION!! REMOVING OUTLIER TAKES MORE TIME!!
+
+for (i in seq(from = 2,  to = 13)) {
+  feature = names(wine_data[i])
+  wine_data_no_color[c(feature)] <- 
+    remove_outliers_color_or_quality_level(wine_data, feature, 'c')
+  wine_data_no_quality_level[c(feature)] <- 
+    remove_outliers_color_or_quality_level(wine_data, feature, 'q')
+  wine_data_no_quality[c(feature)] <- 
+    remove_outliers_quality_color(wine_data, feature)
+}
+
+wine_data_no_color <- na.omit(wine_data_no_color)
+wine_data_no_quality_level <- na.omit(wine_data_no_quality_level)
+wine_data_no_quality <- na.omit(wine_data_no_quality)
+```
+
+## Summary of Data Set
+
+Before the analysis, I would like to have a look at the data structure of wine data set which I combined the data set of red wine and white wine.
+
+### Overall Information
+```{r echo=FALSE, overall_info}
+names(wine_data)
+str(wine_data)
+dim(wine_data)
+summary(wine_data)
+```
+
+### Red Wine Information
+```{r echo=FALSE, red_wine_info}
+dim(subset(wine_data, color=="red"))
+summary(subset(wine_data, color=="red"))
+```
+
+### White Wine Information
+```{r echo=FALSE, white_wine_info}
+dim(subset(wine_data, color=="white"))
+summary(subset(wine_data, color=="white"))
+```
+
+***
+
+## Univariate Plots Section
+### Quality of Wine
+```{r echo=FALSE, message=FALSE, warning=FALSE, quality_of_wine_separated}
+wine_color_subset <- wine_data[, c("quality","color")]
+wine_single_dnorm <- get_dnorm_data_set(wine_data_no_color, "quality")
+
+plot_histogarm_with_norm(wine_color_subset, 'quality', wine_single_dnorm, 1) +
+  scale_x_continuous(breaks = seq(3, 10, 1), lim = c(3, 10)) +
+  xlab('Quality [-]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Quality and Normal Distribution")
+```
+
+#### Summary
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary_quality_of_wine_separated}
+by(wine_data$quality, wine_data$color, summary)
+```
+
+#### Standard Deivation
+```{r echo=FALSE, message=FALSE, warning=FALSE, sd_quality_of_wine_separated}
+by(wine_data$quality, wine_data$color, sd)
+```
+
+As the plot shown above, The histograms are overlapped with the normal distributions which generated by the mean and standard deviation of the variable quality. It is reasonable that the histograms of both red wine and white red fit the normal distributions well. The mode of red wine locates at quality 5 and the one of white wine locates at quality 6. Besides, the quantity of white wine is much more than that of red wine. So it is obvious that the histogram of white wine fit better.
+
+***
+
+### Fixed Acidity of Wine
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_of_wine_separated}
+ggplot(aes(x = fixed.acidity, fill = color), data = wine_data) + 
+  geom_histogram(binwidth = 0.3) +
+  scale_x_continuous(breaks = seq(3.5, 16, 1), lim = c(3.5, 16)) +
+  scale_fill_manual(values = colours_wine) +
+  xlab("Fixed Acidity [g/dm³]") + ylab("Count [-]") +
+  ggtitle("Histogram of Fixed Acidity")
+```
+
+#### Summary
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary_fixed_acidity_of_wine_separated}
+summary(wine_data$fixed.acidity)
+```
+
+The overall distributions of the wiens are similar to normal distribution. However, the distribution of white wine is hard to observed, but it is more concentrated. On the other hand, the distribution of red wine is more wider and it looks like a right skwed distribution. As the summary results, the range, 4.6 to 15.90 g/dm³, of red wine is wider than that, 3.8 to 14.2 g/dm³, of white wine. Besides, all the data of red wine are higher than that of white wine.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_of_wine_separated_outlier}
+# section without outliers handling
+summary_o <- ddply(wine_data, .(color), function(x) summary(x[,'fixed.acidity']))
+sd_o <- ddply(wine_data, .(color), function(x) sd(x[,'fixed.acidity']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data, "fixed.acidity")
+
+p1 <- plot_histogarm_with_norm(wine_data, 'fixed.acidity', wine_single_dnorm, 0.3) +
+  scale_x_continuous(breaks = seq(0, 15, 1), lim = c(3.5, 13.5)) +
+  xlab('Fixed Acidity [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Fixed Acidity and Normal Distribution with Outliers")
+
+# section with outliers handling
+summary_no <- ddply(wine_data_no_color, .(color), function(x) summary(x[,'fixed.acidity']))
+sd_no <- ddply(wine_data_no_color, .(color), function(x) sd(x[,'fixed.acidity']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data_no_color, "fixed.acidity")
+
+p2 <- plot_histogarm_with_norm(wine_data_no_color, 'fixed.acidity', wine_single_dnorm, 0.3) +
+  scale_x_continuous(breaks = seq(0, 15, 1)) +
+  xlab('Fixed Acidity [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Fixed Acidity and Normal Distribution without Outliers")
+
+grid.arrange(p1, p2, nrow=2)
+```
+
+#### Statistic Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, info_fixed_acidity_of_wine_separated}
+report_statistic_info(summary_o, sd_o, summary_no, sd_no)
+```
+
+As we can see the above plots, the distribution of red wine does change too much before and after outlier handling. According to the statistic information, the most values just change very slightly. But the distribution becomes more concentrated a little bit as what standard deivation can tell. Additionally, both histograms of red wine do not fit normal distribution well, because they are more likely right-skewed distribution.
+
+On the other hand, we can see that the original data of white wine has more outliers. the range of x-axis changes much before (from 4 to 14 g/dm³) and after (from 4 to 9 g/dm³). According to the statistic information, most values do not change a lot except the max. value. Besides, both histograms of white wine fit normal distribution well.
+
+***
+
+### Volatile Acidity of Wine
+```{r echo=FALSE, message=FALSE, warning=FALSE, volatile_acidity_of_wine_separated}
+ggplot(aes(x = volatile.acidity, fill = color), data =wine_data) + 
+  geom_histogram(binwidth = 0.05) +
+  scale_x_continuous(breaks = seq(0, 1.5, 0.1), lim = c(0, 1.5)) + 
+  scale_fill_manual(values = colours_wine) +
+  xlab("Volatile Acidity [g/dm³]") + ylab("Count [-]") +
+  ggtitle("Histogram of Volatile Acidity")
+```
+
+#### Summary
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary_volatile_acidity_of_wine_separated}
+summary(wine_data$volatile.acidity)
+```
+
+The overall distribution of the wine is more like a right skewed distribution. The overall range is from 0.08 to 1.58 g/dm³. As we can see here, the distribution of white wine is more concentrated than that of red wine.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, volatile_acidity_of_wine_separated_outlier}
+# section without outliers handling
+summary_o <- ddply(wine_data, .(color), function(x) summary(x[,'volatile.acidity']))
+sd_o <- ddply(wine_data, .(color), function(x) sd(x[,'volatile.acidity']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data, "volatile.acidity")
+
+p1 <- plot_histogarm_with_norm(wine_data, 'volatile.acidity', wine_single_dnorm, 0.02) +
+  scale_x_continuous(breaks = seq(0, 1.5, 0.1), lim = c(0, 1.5)) + 
+  xlab('Volatiel Acidity [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Volatile Acidity and Normal Distribution with Outliers")
+
+# section with outliers handling
+summary_no <- ddply(wine_data_no_color, .(color), function(x) summary(x[,'volatile.acidity']))
+sd_no <- ddply(wine_data_no_color, .(color), function(x) sd(x[,'volatile.acidity']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data_no_color, "volatile.acidity")
+
+p2 <- plot_histogarm_with_norm(wine_data_no_color, 'volatile.acidity', wine_single_dnorm, 0.02) +
+  scale_x_continuous(breaks = seq(0, 1.5, 0.1)) +
+  xlab('Volatile Acidity [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Volatile Acidity and Normal Distribution without Outliers")
+
+grid.arrange(p1, p2, nrow=2)
+```
+
+#### Statistic Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, info_volatile_acidity_of_wine_separated}
+report_statistic_info(summary_o, sd_o, summary_no, sd_no)
+```
+
+As we can see, the histograms of red wine and white wine before and after outlier handling fit the normal distribution well. And both red wine and white wine have the great outliers on the right sides. After the outlier handling, we can see that both distribution are more concentrated, especially the one of white wien. On the other hand, it is more clear that there are two peaks in the distribution of red wine.
+According to the statistic information, most values just change too slightly to notable. But the max values change very much, just as the same as the result of fixed acidity.
+
+***
+
+### Citric Acid of Wine
+```{r echo=FALSE, message=FALSE, warning=FALSE, citric_acid_of_wine_separated}
+ggplot(aes(x = citric.acid, fill = color), data = wine_data) + 
+  geom_histogram(binwidth = 0.02) +
+  scale_x_continuous(breaks = seq(0, 1.5, 0.1), lim = c(0, 1.5)) + 
+  scale_fill_manual(values = colours_wine) +
+  xlab("Citric Acid [g/dm³]") + ylab("Count [-]") +
+  ggtitle("Histogram of Citric Acid")
+```
+
+#### Summary
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary_citric_acid_of_wine_separated}
+summary(wine_data$citric.acid)
+```
+
+The distribution of white wine can be thought as a edge peak distribution. It looks like the normal distribution except that it has a large peak at one tail. On the other hand, the distribution of red wine is more like Plateau distribution. there are many peaks close together, the top of the distribution resembles a plateau. About the summary result, the range, 0.00 to 1.66 g/dm³, of whtie wien is wider than that, 0.00 to 1.00 g/dm³, of red wine.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, citric_acid_of_wine_separated_outlier}
+# section without outliers handling
+summary_o <- ddply(wine_data, .(color), function(x) summary(x[,'citric.acid']))
+sd_o <- ddply(wine_data, .(color), function(x) sd(x[,'citric.acid']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data, "citric.acid")
+
+p1 <- plot_histogarm_with_norm(wine_data, 'citric.acid', wine_single_dnorm, 0.02) +
+  scale_x_continuous(breaks = seq(0, 1.5, 0.1), lim = c(0, 1.5)) + 
+  xlab('Citric Acid [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Citric Acid and Normal Distribution with Outliers")
+
+# section with outliers handling
+summary_no <- ddply(wine_data_no_color, .(color), function(x) summary(x[,'citric.acid']))
+sd_no <- ddply(wine_data_no_color, .(color), function(x) sd(x[,'citric.acid']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data_no_color, "citric.acid")
+
+p2 <- plot_histogarm_with_norm(wine_data_no_color, 'citric.acid', wine_single_dnorm, 0.02) +
+  scale_x_continuous(breaks = seq(0, 1.5, 0.1)) +
+  xlab('Citric Acid [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Citric Acid and Normal Distribution without Outliers")
+
+grid.arrange(p1, p2, nrow=2)
+```
+
+#### Statistic Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, info_citric_acid_of_wine_separated}
+report_statistic_info(summary_o, sd_o, summary_no, sd_no)
+```
+
+After outliers handling, we can find out that the data of both red wine and white wine have the outliers with great value, especially the one of white wine. And it is more clear that the distribution of red wine is the Plateau distribution. On the other hand, the distribution of white fits the normal distribution well, but there is a clear peak value at about 0.5 g/dm³.
+
+***
+
+### Residual Sugar of Wine
+```{r echo=FALSE, message=FALSE, warning=FALSE, residual_sugar_of_wine_separated}
+ggplot(aes(x = residual.sugar, fill = color), data = wine_data) + 
+  geom_histogram(binwidth = 0.2) +
+  scale_x_continuous(breaks = seq(0, 25, 1), lim = c(0, 25)) + 
+  scale_fill_manual(values = colours_wine) +
+  xlab("Residual Sugar [g/dm³]") + ylab("Count [-]") +
+  ggtitle("Histogram of Residual Sugar")
+```
+
+#### Summary
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary_residual_sugar_of_wine_separated}
+summary(wine_data$residual.sugar)
+```
+
+The distributions of both wines are right skewed distribution, especially for that the counts concentrates on the ragne between 1.5 to 3.0 g/dm³. About the summary result, the range, 0.60 to 65.80 g/dm³, of whtie wien is wider than that, 0.90 to 15.5 g/dm³, of red wine. Besides, It is obvious that most white wines have more residual sugar than red wines do.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, reisdual_sugar_of_wine_separated_outlier}
+# section without outliers handling
+summary_o <- ddply(wine_data, .(color), function(x) summary(x[,'residual.sugar']))
+sd_o <- ddply(wine_data, .(color), function(x) sd(x[,'residual.sugar']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data, "residual.sugar")
+
+p1 <- plot_histogarm_with_norm(wine_data, 'residual.sugar', wine_single_dnorm, 0.2) +
+  scale_x_continuous(breaks = seq(0, 25, 1), lim = c(0, 25)) + 
+  xlab('Residual Sugar [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Residual Sugar and Normal Distribution with Outliers")
+
+# section with outliers handling
+summary_no <- ddply(wine_data_no_color, .(color), function(x) summary(x[,'residual.sugar']))
+sd_no <- ddply(wine_data_no_color, .(color), function(x) sd(x[,'residual.sugar']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data_no_color, "residual.sugar")
+
+p2 <- plot_histogarm_with_norm(wine_data_no_color, 'residual.sugar', wine_single_dnorm, 0.2) +
+  scale_x_continuous(breaks = seq(0, 25, 1)) +
+  xlab('Residual Sugar [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Residual Sugar and Normal Distribution without Outliers")
+
+grid.arrange(p1, p2, nrow=2)
+```
+
+#### Statistic Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, info_reisdual.sugar_of_wine_separated}
+report_statistic_info(summary_o, sd_o, summary_no, sd_no)
+```
+
+In the plots, the distribution after outlier handling of red wine becomes very concentrated (from 1.9 to 3.1 g/dm³) and it fits the normal distribution very well. However, we can find out that the data of white wine have the outliers wiht very great value. After the outliers handling, the range does concentrate very much. But, the disttribution still fits normal distribtuion very badly and it is quite wider (from 0.6 to 22 g/dm³).
+
+***
+
+### Chlorides of Wine
+```{r echo=FALSE, message=FALSE, warning=FALSE, chlorides_of_wine_separated}
+ggplot(aes(x = chlorides, fill = color), data = wine_data) + 
+  geom_histogram(binwidth = 0.005) +
+  scale_x_continuous(breaks = seq(0, 0.4, 0.05), lim = c(0, 0.4)) + 
+  scale_fill_manual(values = colours_wine) +
+  xlab("Chlorides [g/dm³]") + ylab("Count [-]") +
+  ggtitle("Histogram of Chlorides")
+```
+
+#### Summary
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary_chlorides_of_wine_separated}
+summary(wine_data$chlorides)
+```
+
+The distributions of both wines are similar to a normal distribution. However, both distributions have a long tail on the right side. But I think it can be thought as the outliers. In the distribution of white wine, most data concentrates on the range 0.02 to 0.12 mg/dm³. And the distrigution of red wine, most data concentrates on the ragnge 0.06 to 0.16 mg/dm³.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, chlorides_of_wine_separated_outlier}
+# section without outliers handling
+summary_o <- ddply(wine_data, .(color), function(x) summary(x[,'chlorides']))
+sd_o <- ddply(wine_data, .(color), function(x) sd(x[,'chlorides']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data, "chlorides")
+
+p1 <- plot_histogarm_with_norm(wine_data, 'chlorides', wine_single_dnorm, 0.005) +
+  scale_x_continuous(breaks = seq(0, 0.4, 0.05), lim = c(0, 0.4)) +
+  xlab('Chlorides [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Chlorides and Normal Distribution with Outliers")
+
+# section with outliers handling
+summary_no <- ddply(wine_data_no_color, .(color), function(x) summary(x[,'chlorides']))
+sd_no <- ddply(wine_data_no_color, .(color), function(x) sd(x[,'chlorides']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data_no_color, "chlorides")
+
+p2 <- plot_histogarm_with_norm(wine_data_no_color, 'chlorides', wine_single_dnorm, 0.005) +
+  scale_x_continuous(breaks = seq(0, 0.4, 0.01)) +
+  xlab('Chlorides [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Chlorides and Normal Distribution without Outliers")
+
+grid.arrange(p1, p2, nrow=2)
+```
+
+#### Statistic Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, info_chlorides_of_wine_separated}
+report_statistic_info(summary_o, sd_o, summary_no, sd_no)
+```
+
+After the outliers handling, the distributions of both red wine and white wine fit the normal distribution very well.
+
+***
+
+### Free Sulfur Dioxide of Wine
+```{r echo=FALSE, message=FALSE, warning=FALSE, free_sulfur_dioxide_of_wine_separated}
+ggplot(aes(x = free.sulfur.dioxide, fill = color), data = wine_data) + 
+  geom_histogram(binwidth = 2) +
+  scale_x_continuous(breaks = seq(0, 200, 10), lim = c(0, 200)) + 
+  scale_fill_manual(values = colours_wine) +
+  xlab("Free Sulfur Dioxide [mg/dm³]") + ylab("Count [-]") +
+  ggtitle("Histogram of Free Sulfur Dioxide")
+```
+
+#### Summary
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary_free_sulfur_dioxide_of_wine_separated}
+summary(wine_data$free.sulfur.dioxide)
+```
+
+The distribution of white wine is similar to a normal distribution with a long tial on the right side. On the other hand, the distribution of red wine is similar to right skewed distribution. In the distribution of white wine, most data concentrates on the range 0 to 80 mg/dm³. And the distrigution of red wine, most data concentrates on the ragnge 0 to 50 mg/dm³.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, free_sulfur_dioxide_of_wine_separated_outlier}
+# section without outliers handling
+summary_o <- ddply(wine_data, .(color), function(x) summary(x[,'free.sulfur.dioxide']))
+sd_o <- ddply(wine_data, .(color), function(x) sd(x[,'free.sulfur.dioxide']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data, "free.sulfur.dioxide")
+
+p1 <- plot_histogarm_with_norm(wine_data, 'free.sulfur.dioxide', wine_single_dnorm, 2) +
+  scale_x_continuous(breaks = seq(0, 200, 10), lim = c(0, 200)) + 
+  xlab('Free Sulfur Dioxide [mg/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Free Sulfur Dioxide and Normal Distribution with Outliers")
+
+# section with outliers handling
+summary_no <- ddply(wine_data_no_color, .(color), function(x) summary(x[,'free.sulfur.dioxide']))
+sd_no <- ddply(wine_data_no_color, .(color), function(x) sd(x[,'free.sulfur.dioxide']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data_no_color, "free.sulfur.dioxide")
+
+p2 <- plot_histogarm_with_norm(wine_data_no_color, 'free.sulfur.dioxide', wine_single_dnorm, 2) +
+  scale_x_continuous(breaks = seq(0, 200, 10)) +
+  xlab('Free Sulfur Dioxide [mg/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Free Sulfur Dioxide and Normal Distribution without Outliers")
+
+grid.arrange(p1, p2, nrow=2)
+```
+
+#### Statistic Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, info_free_sulfur_dioxide_of_wine_separated}
+report_statistic_info(summary_o, sd_o, summary_no, sd_no)
+```
+
+Both red wine and white wine have the outliers with great values. After the outlier handling, it is more clear that the distribution of red wine is more likely a right skewed distribution. On the other hand, the distribution of white wine fits the normal distribution very well.
+
+***
+
+### Total Sulfur Dioxide of Wine
+```{r echo=FALSE, message=FALSE, warning=FALSE, total_sulfur_dioxide_of_wine_separated}
+ggplot(aes(x = total.sulfur.dioxide, fill = color), data = wine_data) + 
+  geom_histogram(binwidth = 2) +
+  scale_x_continuous(breaks = seq(0, 300, 20), lim = c(0, 300)) + 
+  scale_fill_manual(values = colours_wine) +
+  xlab("Total Sulfur Dioxide [mg/dm³]") + ylab("Count [-]") +
+  ggtitle("Histogram of Total Sulfur Dioxide")
+```
+
+#### Summary
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary_total_sulfur_dioxide_of_wine_separated}
+summary(wine_data$total.sulfur.dioxide)
+```
+
+The distribution of red wine is similar to right skewed distribution with the outliers. On the other hand, the ditstribution of white wien is bimodal distribution with the outliers. About the summary data, all the data of white wine are higher than that of the red wine.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, total_sulfur_dioxide_of_wine_separated_outlier}
+# section without outliers handling
+summary_o <- ddply(wine_data, .(color), function(x) summary(x[,'total.sulfur.dioxide']))
+sd_o <- ddply(wine_data, .(color), function(x) sd(x[,'total.sulfur.dioxide']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data, "total.sulfur.dioxide")
+
+p1 <- plot_histogarm_with_norm(wine_data, 'total.sulfur.dioxide', wine_single_dnorm, 2) +
+  scale_x_continuous(breaks = seq(0, 300, 20), lim = c(0, 300)) + 
+  xlab('Total Sulfur Dioxide [mg/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Total Sulfur Dioxide and Normal Distribution with Outliers")
+
+# section with outliers handling
+summary_no <- ddply(wine_data_no_color, .(color), function(x) summary(x[,'total.sulfur.dioxide']))
+sd_no <- ddply(wine_data_no_color, .(color), function(x) sd(x[,'total.sulfur.dioxide']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data_no_color, "total.sulfur.dioxide")
+
+p2 <- plot_histogarm_with_norm(wine_data_no_color, 'total.sulfur.dioxide', wine_single_dnorm, 2) +
+  scale_x_continuous(breaks = seq(0, 300, 20)) +
+  xlab('Total Sulfur Dioxide [mg/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Total Sulfur Dioxide and Normal Distribution without Outliers")
+
+grid.arrange(p1, p2, nrow=2)
+```
+
+#### Statistic Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, info_total_sulfur_dioxide_of_wine_separated}
+report_statistic_info(summary_o, sd_o, summary_no, sd_no)
+```
+
+In this plots, red wine has the outliers with very great value. After the outlier handling, the range becomes as 1/3 as original one. The distribution does not change much before and after the outlier handling. On the other hand, the values of outliers of white wine is not so great based on the new range (from 20 to 260 mg/dm³) of the distribution. Similarly, the distribution of white wine does not change before and after the outliers handling, and both of them fit the normal distribution well.
+
+***
+
+### Density of Wine
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_of_wine_separated}
+ggplot(aes(x = density, fill = color), data = wine_data) + 
+  geom_histogram(binwidth = 0.0002) +
+  scale_x_log10(breaks = seq(0.9870, 1.00400, 0.002), lim = c(0.9870, 1.00400)) + 
+  scale_fill_manual(values = colours_wine) +
+  xlab("Density of Wine [g/dm³]") + ylab("Count [-]") +
+  ggtitle("Histogram of Density")
+```
+
+#### Summary
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary_density_of_wine_separated}
+summary(wine_data$density)
+```
+
+ The distribution of white wine can be thought as bimodal distribution and the one of red wine is similar to a normal distribution. And most counts of both wines are around 0.995 g/dm³.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_of_wine_separated_outlier}
+# section without outliers handling
+summary_o <- ddply(wine_data, .(color), function(x) summary(x[,'density']))
+sd_o <- ddply(wine_data, .(color), function(x) sd(x[,'density']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data, "density")
+
+p1 <- plot_histogarm_with_norm(wine_data, 'density', wine_single_dnorm, 0.0002) +
+  scale_x_continuous(breaks = seq(0.9870, 1.0400, 0.01)) + 
+  xlab('Density of Wine [mg/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Density and Normal Distribution with Outliers")
+
+# section with outliers handling
+summary_no <- ddply(wine_data_no_color, .(color), function(x) summary(x[,'density']))
+sd_no <- ddply(wine_data_no_color, .(color), function(x) sd(x[,'density']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data_no_color, "density")
+
+p2 <- plot_histogarm_with_norm(wine_data_no_color, 'density', wine_single_dnorm, 0.0002) +
+  scale_x_continuous(breaks = seq(0.9870, 1.00400, 0.002)) +
+  xlab('Density of Wine [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Density and Normal Distribution without Outliers")
+
+grid.arrange(p1, p2, nrow=2)
+```
+
+#### Statistic Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, info_density_of_wine_separated}
+report_statistic_info(summary_o, sd_o, summary_no, sd_no)
+```
+
+In this plot, the data of white wine has the outliers with relatively great value. On the other hand, the range of red win does not change too much. After the outliers handling, the distribution of red wine still fits the normal distribution well. But the distribution processed the outliers handling becomes like a right skewed distribution a little bit.
+
+***
+
+### pH of Wine
+```{r echo=FALSE, message=FALSE, warning=FALSE, pH_of_wine_separated}
+ggplot(aes(x = pH, fill = color), data = wine_data) + 
+  geom_histogram(binwidth = 0.02) +
+  scale_fill_manual(values = colours_wine) +
+  xlab("pH [-]") + ylab("Count [-]") +
+  ggtitle("Histogram of pH")
+```
+
+#### Summary
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary_pH_of_wine_separated}
+summary(wine_data$pH)
+```
+
+The distributions of both wines are similar to a normal distribution. And most data of both wines concentrate on the range 2.7 to 3.7. However, there still are serval outliers over the value 4.0.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, pH_of_wine_separated_outlier}
+# section without outliers handling
+summary_o <- ddply(wine_data, .(color), function(x) summary(x[,'pH']))
+sd_o <- ddply(wine_data, .(color), function(x) sd(x[,'pH']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data, "pH")
+
+p1 <- plot_histogarm_with_norm(wine_data, 'pH', wine_single_dnorm, 0.02) +
+  xlab('pH [-]') + ylab('Density[-]') +
+  ggtitle("Density of Wine pH and Normal Distribution with Outliers")
+
+# section with outliers handling
+summary_no <- ddply(wine_data_no_color, .(color), function(x) summary(x[,'pH']))
+sd_no <- ddply(wine_data_no_color, .(color), function(x) sd(x[,'pH']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data_no_color, "pH")
+
+p2 <- plot_histogarm_with_norm(wine_data_no_color, 'pH', wine_single_dnorm, 0.02) +
+  xlab('pH []') + ylab('Density[-]') +
+  ggtitle("Density of Wine pH and Normal Distribution without Outliers")
+
+grid.arrange(p1, p2, nrow=2)
+```
+
+#### Statistic Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, info_pH_of_wine_separated}
+report_statistic_info(summary_o, sd_o, summary_no, sd_no)
+```
+
+The distributions of both red wine and white wine almost do change before and after the outliers handling. They still fit the normal distribution very well.
+
+***
+
+### Sulphates of Wine
+```{r echo=FALSE, message=FALSE, warning=FALSE, sulphates_of_wine_separated}
+ggplot(aes(x = sulphates, fill = color), data = wine_data) + 
+  geom_histogram(binwidth = 0.02) +
+  scale_x_continuous(breaks = seq(0.2, 1.6, 0.1), lim = c(0.2, 1.6)) + 
+  scale_fill_manual(values = colours_wine) +
+  xlab("Sulphates [g/dm³]") + ylab("Count [-]") +
+  ggtitle("Histogram of Alcohol")
+```
+
+#### Summary
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary_sulphates_of_wine_separated}
+summary(wine_data$sulphates)
+```
+
+The distributions of both wines are similar to a normal distribution. However, the distribution of red wine has a long tail on right side, which is thought as the outlier. And about the summary data, all the data of red wine are higher than that of the white wine.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, sulphates_of_wine_separated_outlier}
+# section without outliers handling
+summary_o <- ddply(wine_data, .(color), function(x) summary(x[,'sulphates']))
+sd_o <- ddply(wine_data, .(color), function(x) sd(x[,'sulphates']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data, "sulphates")
+
+p1 <- plot_histogarm_with_norm(wine_data, 'sulphates', wine_single_dnorm, 0.02) +
+  scale_x_continuous(breaks = seq(0.2, 1.6, 0.1), lim = c(0.2, 1.6)) + 
+  xlab('Sulphates [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Sulphates and Normal Distribution with Outliers")
+
+# section with outliers handling
+summary_no <- ddply(wine_data_no_color, .(color), function(x) summary(x[,'sulphates']))
+sd_no <- ddply(wine_data_no_color, .(color), function(x) sd(x[,'sulphates']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data_no_color, "sulphates")
+
+p2 <- plot_histogarm_with_norm(wine_data_no_color, 'sulphates', wine_single_dnorm, 0.02) +
+  scale_x_continuous(breaks = seq(0.2, 1.6, 0.1)) +
+  xlab('Sulphates [g/dm³]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Sulphates and Normal Distribution without Outliers")
+
+grid.arrange(p1, p2, nrow=2)
+```
+
+#### Statistic Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, info_sulphates_of_wine_separated}
+report_statistic_info(summary_o, sd_o, summary_no, sd_no)
+```
+
+The data of red wine has the outliers with the values greater than that of white wien. After the outlier handling, the plot shows that the distribution of red wine is like a right skewed distribution. About the white wine, the distribution does not change too much. Just some outliers were removed.
+
+***
+
+### Alcohol of Wine
+```{r echo=FALSE, message=FALSE, warning=FALSE, alcohol_of_wine_separated}
+ggplot(aes(x = alcohol, fill = color), data = wine_data) + 
+  geom_histogram(binwidth = 0.1) +
+  scale_x_continuous(breaks = seq(8, 15, 0.5), lim = c(8, 15)) +
+  scale_fill_manual(values = colours_wine) +
+  xlab("Alcohol [%(Volume)]") + ylab("Count [-]") +
+  ggtitle("Histogram of Alcohol")
+```
+
+#### Summary
+```{r echo=FALSE, message=FALSE, warning=FALSE, summary_alcohol_of_wine_separated}
+summary(wine_data$alcohol)
+```
+
+The distributions of both red wine and white wine are similar. In my opinion, they are similar to right skewed distribuiton with noise, espeically for the distribution of white wine. The most counts of both red wine and white wine locate at 9.5% 
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, alcohol_of_wine_separated_outlier}
+# section without outliers handling
+summary_o <- ddply(wine_data, .(color), function(x) summary(x[,'alcohol']))
+sd_o <- ddply(wine_data, .(color), function(x) sd(x[,'alcohol']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data, "alcohol")
+
+p1 <- plot_histogarm_with_norm(wine_data, 'alcohol', wine_single_dnorm, 0.1) +
+  scale_x_continuous(breaks = seq(8, 15, 1.0), lim = c(8, 15)) +
+  xlab('Alcohol [%(Volume)]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Alcohol and Normal Distribution with Outliers")
+
+# section with outliers handling
+summary_no <- ddply(wine_data_no_color, .(color), function(x) summary(x[,'alcohol']))
+sd_no <- ddply(wine_data_no_color, .(color), function(x) sd(x[,'alcohol']))
+
+wine_single_dnorm <- get_dnorm_data_set(wine_data_no_color, "alcohol")
+
+p2 <- plot_histogarm_with_norm(wine_data_no_color, 'alcohol', wine_single_dnorm, 0.1) +
+  scale_x_continuous(breaks = seq(8, 15, 1.0)) +
+  xlab('Alcohol [%(Volume)]') + ylab('Density[-]') +
+  ggtitle("Density of Wine Alcohol and Normal Distribution without Outliers")
+
+grid.arrange(p1, p2, nrow=2)
+```
+
+#### Statistic Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, info_alcohol_of_wine_separated}
+report_statistic_info(summary_o, sd_o, summary_no, sd_no)
+```
+
+After the outlier handling, not only the shape of the distributions but also the ranges of them do not change. And they also do not fit the normal distribution well. There are many peaks over the both distribuiton.
+
+***
+
+## Univariate Analysis
+### What is the structure of your dataset?
+There are 1599 records of red wine and 4898 records of white wine in the dataset with 13 original features and 2 features, color and quality_level, which I added. 
+
+About the features, there is one categorical variable, quality, and the others are numerical variables that indicate physical and chemical properties of the wine.
+
+According to the plots, most features' distributions of both red wine and white wine are similar to normal distribution and skewed distribution except the one of white wine's total sulfur dioxide and density, which are bimodal distribution distribution, and the one of red wine's citric acid, which is plateau distribution.
+
+Most distributions of red wine are similar to that of white wine except the ones of citric acid and total sulfur dioxide.
+
+Although the most distributions of red wine and white wine are similar, the values are quite different. Therefore, it is interesting that whether the feautres, which affect the quality of red wine and white wine, will be different or not. 
+
+<br>
+
+### What is/are the main feature(s) of interest in your dataset?
+The main feature in the data set is quality. I would like to determine which features are sutible for the predicting the quality of the wine. Furthermore, whether the conclusions of red wine and white wine will be similar or not.
+
+<br>
+
+### What other features in the dataset do you think will help support your investigation into your feature(s) of interest?
+According to the document, wine quality information, I think that the main features should be alcohol, free sulfur dioxide and acidity, especially citric acid. 
+
+<br>
+
+### Did you create any new variables from existing variables in the dataset?
+Yes, I created the variable, quality_level, to generate better plots. It has three values, low, medium and high, which are generated by quantile with 1/3, 2/3 and 1 proporation of the current data set. Besides, I also create the variable, total acidity, which is obtained by the summation of fixed acidity and volatile acidity.
+
+In order to do the analysis of outlier handling, I create other three data frames, wine_data_no_color, wine_data_no_quality_level and wine_data_no_quality, to store the data processed by outlier handling. This data frame would be used in bivarite plots/analysis section and multivariate plots/analysis section.
+The different among these data are the groups during the outliers handling. wine_data_no_color is grouped by wine's color, wine_data_no_quality_level is grouped by quality level and wine's color and wine_data_no_quality is grouped by quality and wine's color. At the beginning, I think that it should be quite different between red wine and white wine. Therefore, almost the data handling were carry out respectively.
+
+<br>
+
+### Of the features you investigated, were there any unusual distributions? Did you perform any operations on the data to tidy, adjust, or change the form of the data? If so, why did you do this?
+As my observation, most distributions are similar to normal distribution. These features can be thought as that most values are close to the mean and median count.However, there are two features, residual sugar and total sulfur dioxide, shows different distribution. In the plot of residual sugar, the distributions of both red wine and white wine are like right-half normal distribution. In the plot of total sulfur dioxide, the distribution of white wine shows that there are two peaks at value 20-30 and 110-120.
+
+Additionally, I performed the analysis of outlier handling. In this section, I just used wine_data_no_color to do the comparison between the original data and outliers handling data. I was not too suprised that the distributions of each feature do not chagne very much before and after the outliers handling. But the outliers handling does help me to observe the distribution of each features and the difference between red wine and white wine.
+
+***
+***
+
+## Bivariate Plots Section
+```{r echo=FALSE, message=FALSE, warning=FALSE, correlation}
+p_red <- ggcorr(subset(wine_data, color=='red')[,c(2:12, 14)], 
+                name = "Red Wine", label = TRUE, 
+                label_size = 3, size=3, layout.exp = 2, 
+                hjust = 0.85, legend.position = "top")
+
+p_white <- ggcorr(subset(wine_data, color=='white')[,c(2:12, 14)], 
+                  name = "White Wine", label = TRUE, 
+                  label_size = 3, size=3, layout.exp = 2, 
+                  hjust = 0.85, legend.position = "top")
+
+grid.arrange(p_red, p_white, nrow = 1)
+```
+
+The above plots show the correlations between the features in the dataset seperated by the kind of the wine. A darker color means a stronger correlation. A red color is a positive correlation, where as blue is a negative correlation. The numbers in the boxes are the correlation coefficients. 
+
+According to the above plots, it is obvious that the correlation coefficient of each feature with each feature are different between red wine and white wine.
+
+First, the feature of interest of this report is the variable quality.
+Most influence by other features are similar between red wine and white wine, especially for alcohol, 0.5 in red wine and 0.4 in white wien.
+On the other hand, fixed acidity has positive correlation, 0.1, with quality in red wine. But it is negative  value, -0.1, in white wine. 
+
+Second, I picked several high correlations to plot. I classified them into two section.
+One is "The Features Highly Correlated to Density of Wine", 
+and the other is "The Features Highly Correlated to Acidity of Wine".
+Besides, I also picked the correlation of Total sulfur oxides and free sulfur dioxide because free sulfur dioxide is part of total sulfur dioxide. Thus, the plot of Total sulfur oxides vs free sulfur dioxide should show the good correlation.
+
+<br>
+
+***
+
+### The Features Highly Correlated to Density of Wine
+#### Density vs Alcohol
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_alcohol}
+plot_scatter_with_regression_line(wine_data, "density", "alcohol", "color") +
+  coord_cartesian(xlim=c(min(wine_data$density), 1.005), ylim=c(8, 15)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Density [g/dm³]") + ylab("Alcohol [%(Volume)]") +
+  ggtitle("Density vs Alcohol")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_alcohol_corr_info}
+ddply(wine_data, .(color), summarise, 
+      corr = cor.test(density, alcohol)$estimate)
+```
+
+According to the plot, it is obvious that not onlye the line of the relationship shows that density tends to increase with decreasing alcohol content in both red wine and white wine, but also the distributions of the scatter points do.
+Besides, there is much higher correlation, -0.78, in white wine than that, -0.49, in red wine.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_alcohol_outlier}
+p1 <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                  "density", "alcohol", "color") +
+  coord_cartesian(xlim=c(min(wine_data$density), 1.005), ylim=c(8, 15)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Density [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+p2 <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                  "density", "alcohol", "color") +
+  coord_cartesian(xlim=c(min(wine_data$density), 1.005), ylim=c(8, 15)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Density [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Quality Level and Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+legend = gtable_filter(ggplot_gtable(ggplot_build(p1)), "guide-box")
+y_label = textGrob("Alcohol [%(Volume)]", rot = 90, vjust = 0.5)
+main_title = textGrob("Density vs Alcohol with Outliers Handling", 
+                      gp = gpar(fontface = "bold", cex = 1.2)) 
+grid.arrange(
+  main_title,
+  arrangeGrob(
+  y_label,
+  arrangeGrob(
+  p1 + theme(legend.position="none"), 
+  p2 + theme(legend.position="none"),
+  nrow = 1),
+  legend,
+  widths=unit.c(unit(2, "lines"), unit(1, "npc") - unit(1, "lines") - legend$width, legend$width),
+  nrow = 1),
+  nrow=2, heights=unit.c(unit(2, "line"), unit(1, "npc") - unit(3, "line")))
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_alcohol_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color), summarise, 
+      corr = cor.test(density, alcohol)$estimate)
+
+corr_ql <- ddply(wine_data_no_quality_level, .(color), summarise, 
+      corr = cor.test(density, alcohol)$estimate)
+
+report_corr_info(corr_c, corr_ql)
+```
+
+With outlier handling, both data sets increase the correlation between density and alcohol. And the distribution of scatter points of both data sets become narrow and steep. And distributions of both wine look like more oval
+
+***
+
+#### Density vs Fixed Acidity
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_fixed_acidity}
+plot_scatter_with_regression_line(wine_data, 
+                                       "density", "fixed.acidity", "color") +
+  coord_cartesian(xlim=c(min(wine_data$density), 1.005)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Density [g/dm³]") + ylab("Fixed Acidity [g/dm³]") +
+  ggtitle("Density vs Fixed Acidity")
+
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_fixed_acidity_corr_info}
+ddply(wine_data, .(color), summarise, 
+      corr = cor.test(density, fixed.acidity)$estimate)
+```
+
+We can see that it is obvious that density tends to increase with increasing fixed acidity in red wine. But it seems that outliers handling did not change the result. However, this correlation is weak in white wine.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_fixed_acidity_outlier}
+p1 <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "density", "fixed.acidity", "color") +
+  coord_cartesian(xlim=c(min(wine_data$density), 1.005)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Density [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+p2 <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "density", "fixed.acidity", "color") +
+  coord_cartesian(xlim=c(min(wine_data$density), 1.005)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Density [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Quality Level and Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+legend = gtable_filter(ggplot_gtable(ggplot_build(p1)), "guide-box")
+y_label = textGrob("Fixed Acidity [g/dm³]", rot = 90, vjust = 0.5)
+main_title = textGrob("Density vs Fixed Acidity with Outliers Handling", 
+                      gp = gpar(fontface = "bold", cex = 1.2)) 
+grid.arrange(
+  main_title,
+  arrangeGrob(
+  y_label,
+  arrangeGrob(
+  p1 + theme(legend.position="none"), 
+  p2 + theme(legend.position="none"),
+  nrow = 1),
+  legend,
+  widths=unit.c(unit(2, "lines"), unit(1, "npc") - unit(1, "lines") - legend$width, legend$width),
+  nrow = 1),
+  nrow=2, heights=unit.c(unit(2, "line"), unit(1, "npc") - unit(3, "line")))
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_fixed_acidity_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color), summarise, 
+      corr = cor.test(density, fixed.acidity)$estimate)
+
+corr_ql <- ddply(wine_data_no_quality_level, .(color), summarise, 
+      corr = cor.test(density, fixed.acidity)$estimate)
+
+report_corr_info(corr_c, corr_ql)
+```
+
+With outlier handling, both data sets decrease the correlation between density and fixed acidity. And they did not change too much before and after the outliers handling. And the distribution of scatter points of red wine becomes narrow and steep, but it is getting round for white wine.
+
+***
+
+#### Density vs Residual Sugar
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_residual_sugar}
+plot_scatter_with_regression_line(wine_data, 
+                                       "density", "residual.sugar", "color") +     
+  coord_cartesian(xlim=c(min(wine_data$density), 1.005), 
+                    ylim=c(min(wine_data$residual.sugar), 25)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Density [g/dm³]") + ylab("Residual Sugar [g/dm³]") +
+  ggtitle("Density vs Residual Sugar")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_residual_sugar_corr_info}
+ddply(wine_data, .(color), summarise, 
+      corr = cor.test(density, residual.sugar)$estimate)
+```
+
+We can see that it is obvious that density tends to increase with increasing residual sugar in white wine. However, this correlation is weak in red wine. Besides, most data of white wine are higher than that of red wine.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_residual_sugar_outlier}
+p1 <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "density", "residual.sugar", "color") +     
+  coord_cartesian(xlim=c(min(wine_data$density), 1.005), 
+                    ylim=c(min(wine_data$residual.sugar), 25)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Density [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+p2 <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "density", "residual.sugar", "color") +     
+  coord_cartesian(xlim=c(min(wine_data$density), 1.005), 
+                    ylim=c(min(wine_data$residual.sugar), 25)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Density [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Quality Level and Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+legend = gtable_filter(ggplot_gtable(ggplot_build(p1)), "guide-box")
+y_label = textGrob("Residual Sugar [g/dm³]", rot = 90, vjust = 0.5)
+main_title = textGrob("Density vs Residual Sugar with Outliers Handling", 
+                      gp = gpar(fontface = "bold", cex = 1.2)) 
+grid.arrange(
+  main_title,
+  arrangeGrob(
+  y_label,
+  arrangeGrob(
+  p1 + theme(legend.position="none"), 
+  p2 + theme(legend.position="none"),
+  nrow = 1),
+  legend,
+  widths=unit.c(unit(2, "lines"), unit(1, "npc") - unit(1, "lines") - legend$width, legend$width),
+  nrow = 1),
+  nrow=2, heights=unit.c(unit(2, "line"), unit(1, "npc") - unit(3, "line")))
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_residual_sugar_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color), summarise, 
+      corr = cor.test(density, residual.sugar)$estimate)
+
+corr_ql <- ddply(wine_data_no_quality_level, .(color), summarise, 
+      corr = cor.test(density, residual.sugar)$estimate)
+
+report_corr_info(corr_c, corr_ql)
+```
+
+After the outliers handling, the correlations between density and residual sugar of both wine are almost as the same as the original data set. After cleaning the outliers, the shape of red wine becomes more narrow, and it looks like a triangle for white wine.
+
+***
+
+#### Density vs Total Sulfur Dioxide
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_total_sulfur_dioxide}
+plot_scatter_with_regression_line(wine_data, 
+                                       "density", "total.sulfur.dioxide", "color") +
+  coord_cartesian(xlim=c(min(wine_data$density), 1.005), 
+                    ylim=c(min(wine_data$total.sulfur.dioxide), 350)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Density [g/dm³]") + ylab("Total Sulfur Dioxide [mg/dm³]") +
+  ggtitle("Density vs Total Sulfur Dioxide")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_total_sulfur_dioxide_corr_info}
+ddply(wine_data, .(color), summarise, 
+      corr = cor.test(density, free.sulfur.dioxide)$estimate)
+```
+
+To picked up this correlation is because that it is positive correlation in white wine, but negative correlation in red wine. Although the correlation coefficient, 0.29, of white wine is not so high, the scatter plot shows that density tends to increase with increasing total sulfur dioxide. Besides, most data of white wine are higher than that of red wine.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_total_sulfur_dioxide_outlier}
+p1 <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "density", "total.sulfur.dioxide", "color") +
+  coord_cartesian(xlim=c(min(wine_data$density), 1.005), 
+                    ylim=c(min(wine_data$total.sulfur.dioxide), 350)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Density [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+p2 <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "density", "total.sulfur.dioxide", "color") +
+  coord_cartesian(xlim=c(min(wine_data$density), 1.005), 
+                    ylim=c(min(wine_data$total.sulfur.dioxide), 350)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Density [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Quality Level and Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+legend = gtable_filter(ggplot_gtable(ggplot_build(p1)), "guide-box")
+y_label = textGrob("Total Sulfur Dioxide [mg/dm³]", rot = 90, vjust = 0.5)
+main_title = textGrob("Density vs Total Sulfur Dioxide with Outliers Handling", 
+                      gp = gpar(fontface = "bold", cex = 1.2)) 
+grid.arrange(
+  main_title,
+  arrangeGrob(
+  y_label,
+  arrangeGrob(
+  p1 + theme(legend.position="none"), 
+  p2 + theme(legend.position="none"),
+  nrow = 1),
+  legend,
+  widths=unit.c(unit(2, "lines"), unit(1, "npc") - unit(1, "lines") - legend$width, legend$width),
+  nrow = 1),
+  nrow=2, heights=unit.c(unit(2, "line"), unit(1, "npc") - unit(3, "line")))
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_vs_total_sulfur_dioxide_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color), summarise, 
+      corr = cor.test(density, total.sulfur.dioxide)$estimate)
+
+corr_ql <- ddply(wine_data_no_quality_level, .(color), summarise, 
+      corr = cor.test(density, total.sulfur.dioxide)$estimate)
+
+report_corr_info(corr_c, corr_ql)
+```
+
+After the outliers handling, the correlation of both data set dramatically increase. The correlation of red wine becomes weak relation from no relation. And the one of white wine becomes strong relation from weak relation. It means 2 thing. First, the outliers do affect the relation between density and total surful dioxide. Second, the relation is much stronger than what we thought due to the resultes of original data. And the shape of both distribution of scatter points are getting round.
+
+***
+
+### The Features Highly Correlated to Acidity of Wine
+#### Citric Acid vs pH
+```{r echo=FALSE, message=FALSE, warning=FALSE, citric_acid_vs_pH}
+plot_scatter_with_regression_line(wine_data, 
+                                       "citric.acid", "pH", "color") +
+  coord_cartesian(xlim=c(min(wine_data$citric.acid),1.5), ylim=c(2.5, 4)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Citric Acid [g/dm³]") + ylab("pH [-]") +
+  ggtitle("Citric Acid vs pH")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, citric_acid_vs_pH_corr_info}
+ddply(wine_data, .(color), summarise, 
+      corr = cor.test(citric.acid, pH)$estimate)
+```
+
+In this plot, not only the relationship line with the correlation coefficient - 0.54 but also the distribution of scatter points of red wine shows that pH tends to decrease with increasing citric acid. On the other hand, not only the distribution of scatter points of white wine shows there is no relation between pH and citric acid, but also the correlation coefficient, -0.16, is weak.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, citric_acid_vs_pH_outlier}
+p1 <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "citric.acid", "pH", "color") +
+  coord_cartesian(xlim=c(min(wine_data_no_color$citric.acid),1.5), ylim=c(2.5, 4)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Citric Acid [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+p2 <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "citric.acid", "pH", "color") +
+  coord_cartesian(xlim=c(min(wine_data_no_quality_level$citric.acid),1.5)
+                  , ylim=c(2.5, 4)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Citric Acid [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Quality Level and Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+legend = gtable_filter(ggplot_gtable(ggplot_build(p1)), "guide-box")
+y_label = textGrob("pH [-]", rot = 90, vjust = 0.5)
+main_title = textGrob("Citric Acid vs pH with Outliers Handling", 
+                      gp = gpar(fontface = "bold", cex = 1.2)) 
+grid.arrange(
+  main_title,
+  arrangeGrob(
+  y_label,
+  arrangeGrob(
+  p1 + theme(legend.position="none"), 
+  p2 + theme(legend.position="none"),
+  nrow = 1),
+  legend,
+  widths=unit.c(unit(2, "lines"), unit(1, "npc") - unit(1, "lines") - legend$width, legend$width),
+  nrow = 1),
+  nrow=2, heights=unit.c(unit(2, "line"), unit(1, "npc") - unit(3, "line")))
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, citric_acid_vs_pH_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color), summarise, 
+      corr = cor.test(citric.acid, pH)$estimate)
+
+corr_ql <- ddply(wine_data_no_quality_level, .(color), summarise, 
+      corr = cor.test(citric.acid, pH)$estimate)
+
+report_corr_info(corr_c, corr_ql)
+```
+
+The distribution of scatter points of both red wine and white wine become much more clear to observe. It implies that there were lots of outliers in data of both wines. The correlation of both data sets decrease a little bit. But overall tendency is the same in my opinion. Besides, the shape of distribution of scatter points of white wine becomes oval, and it becomes a little bit narrow for red wine.
+
+***
+
+#### Volatile Acidity vs pH
+```{r echo=FALSE, message=FALSE, warning=FALSE, volatile_acidity_vs_pH}
+plot_scatter_with_regression_line(wine_data,
+                                       "volatile.acidity", "pH", "color") +
+  coord_cartesian(xlim=c(min(wine_data$volatile.acidity),1.5), 
+                    ylim=c(2.5, 4)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Volatile Acidity [g/dm³]") + ylab("pH [-]") +
+  ggtitle("Volatile Acidity vs pH")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, volatile_acidity_vs_pH_corr_info}
+ddply(wine_data, .(color), summarise, 
+      corr = cor.test(volatile.acidity, pH)$estimate)
+```
+
+To picked up this correlation is because that it is positive correlation in red wine, but negative correlation in white wine. Besides, it is interesting for the correlation coefficet, 0.23, in red wine, because I was expected that acidity should contribute to decreasing pH rather than increasing pH. Although the scatter points of red wine shows that there is no relation between volatile acidity and pH, the correlation coefficient, 0.23, of red wine is the positive correlation. About white wine, not only the correlation coefficient, -0.032, is quite low value, but also the scatter points shows no relation between volatile acidity and pH. Besides, the data of white wine more concentrates on the range 0.1 to 0.4 g/dm³, but the data of red wine is quite divergent.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, volatile_acidity_vs_pH_outlier}
+p1 <- plot_scatter_with_regression_line(wine_data_no_color,
+                                       "volatile.acidity", "pH", "color") +
+  coord_cartesian(xlim=c(min(wine_data$volatile.acidity),1.5), 
+                    ylim=c(2.5, 4)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Volatile Acidity [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+p2 <- plot_scatter_with_regression_line(wine_data_no_quality_level,
+                                       "volatile.acidity", "pH", "color") +
+  coord_cartesian(xlim=c(min(wine_data$volatile.acidity),1.5), 
+                    ylim=c(2.5, 4)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Volatile Acidity [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Quality Level and Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+legend = gtable_filter(ggplot_gtable(ggplot_build(p1)), "guide-box")
+y_label = textGrob("pH [-]", rot = 90, vjust = 0.5)
+main_title = textGrob("Volatile Acidity vs pH with Outliers Handling", 
+                      gp = gpar(fontface = "bold", cex = 1.2)) 
+grid.arrange(
+  main_title,
+  arrangeGrob(
+  y_label,
+  arrangeGrob(
+  p1 + theme(legend.position="none"), 
+  p2 + theme(legend.position="none"),
+  nrow = 1),
+  legend,
+  widths=unit.c(unit(2, "lines"), unit(1, "npc") - unit(1, "lines") - legend$width, legend$width),
+  nrow = 1),
+  nrow=2, heights=unit.c(unit(2, "line"), unit(1, "npc") - unit(3, "line")))
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, volatile_acidity_vs_pH_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color), summarise, 
+      corr = cor.test(volatile.acidity, pH)$estimate)
+
+corr_ql <- ddply(wine_data_no_quality_level, .(color), summarise, 
+      corr = cor.test(volatile.acidity, pH)$estimate)
+
+report_corr_info(corr_c, corr_ql)
+```
+
+Similarly, the distribution of scatter points become much clear. It means that there were many outliers in the data. But the correlation of both data set do not change before and after the outliers handling. The shape of red wine becomes round, and the shape of white wine becomes like a oval.
+
+***
+
+#### Fixed Acidity vs pH
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_vs_pH}
+plot_scatter_with_regression_line(wine_data, 
+                                       "fixed.acidity", "pH", "color") +
+  coord_cartesian(xlim=c(min(wine_data$fixed.acidity),16), 
+                    ylim=c(2.5, 4)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Fixed Acidity [g/dm³]") + ylab("pH [-]") +
+  ggtitle("Fixed Acidity vs pH")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_vs_pH_corr_info}
+ddply(wine_data, .(color), summarise, 
+      corr = cor.test(fixed.acidity, pH)$estimate)
+```
+
+According to the plot, the scatter points of red wine shows that pH tends to decrease with increasing fixed acidity, but the one of white wine does not the tend. And the data of white wine more concentrates than that of red wine. About the correlation coefficient, the one, -0.68, of red wine can be thought strong relation, but the one, -0.42, of white wine is thought as medium relation in my opinion.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_vs_pH_outlier}
+p1 <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "fixed.acidity", "pH", "color") +
+  coord_cartesian(xlim=c(min(wine_data$fixed.acidity),16), 
+                    ylim=c(2.5, 4)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Fixed Acidity [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+p2 <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "fixed.acidity", "pH", "color") +
+  coord_cartesian(xlim=c(min(wine_data$fixed.acidity),16), 
+                    ylim=c(2.5, 4)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Fixed Acidity [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Quality Level and Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+legend = gtable_filter(ggplot_gtable(ggplot_build(p1)), "guide-box")
+y_label = textGrob("pH [-]", rot = 90, vjust = 0.5)
+main_title = textGrob("Fixed Acidity vs pH with Outliers Handling", 
+                      gp = gpar(fontface = "bold", cex = 1.2)) 
+grid.arrange(
+  main_title,
+  arrangeGrob(
+  y_label,
+  arrangeGrob(
+  p1 + theme(legend.position="none"), 
+  p2 + theme(legend.position="none"),
+  nrow = 1),
+  legend,
+  widths=unit.c(unit(2, "lines"), unit(1, "npc") - unit(1, "lines") - legend$width, legend$width),
+  nrow = 1),
+  nrow=2, heights=unit.c(unit(2, "line"), unit(1, "npc") - unit(3, "line")))
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_vs_pH_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color), summarise, 
+      corr = cor.test(fixed.acidity, pH)$estimate)
+
+corr_ql <- ddply(wine_data_no_quality_level, .(color), summarise, 
+      corr = cor.test(fixed.acidity, pH)$estimate)
+
+report_corr_info(corr_c, corr_ql)
+```
+
+After the outliers handling, lots of outliers have been removed. But according to the statistic results, the correlation does not change. The shape of distribuiotn of scatter points of white wine becomes like a oval, and it looks much more narrow and steep for red wine.
+
+***
+
+#### Volatile Acidity vs Citric Acid
+```{r echo=FALSE, message=FALSE, warning=FALSE, volatile_acidity_vs_citric_acid}
+plot_scatter_with_regression_line(wine_data, 
+                                       "volatile.acidity", "citric.acid", "color") +
+  coord_cartesian(xlim=c(min(wine_data$volatile.acidity),1.5), 
+                    ylim=c(min(wine_data$citric.acid), 1.0)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Volatile Acidity [g/dm³]") + ylab("Citric Acid [g/dm³]") +
+  ggtitle("Volatile Acidity vs Citric Acid")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, volatile_acidity_vs_citric_acid_corr_info}
+ddply(wine_data, .(color), summarise, 
+      corr = cor.test(volatile.acidity, citric.acid)$estimate)
+```
+
+According to <a href="https://en.wikipedia.org/wiki/Acids_in_wine">wikipedia</a>, volatile acidty is usually thought as acetic acid. However, not only the correlation coefficient, -0.55, but also the scatter points of the red wine show that volatile acidity tends to decrease with increasing citric acid, although the scatter points of red looks quite divergent. On the other hand, the data of white wine more concentrates on the range 0.1 to 0.4 g/dm³. And the correlation coefficient, -0.15, indicates that it is a weak relation between volatile acidity and citric acid in white wine.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, volatile_acidity_vs_citric_acid_outlier}
+p1 <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "volatile.acidity", "citric.acid", "color") +
+  coord_cartesian(xlim=c(min(wine_data$volatile.acidity),1.5), 
+                    ylim=c(min(wine_data$citric.acid), 1.0)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Volatile Acidity [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+p2 <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "volatile.acidity", "citric.acid", "color") +
+  coord_cartesian(xlim=c(min(wine_data$volatile.acidity),1.5), 
+                    ylim=c(min(wine_data$citric.acid), 1.0)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Volatile Acidity [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Quality Level and Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+legend = gtable_filter(ggplot_gtable(ggplot_build(p1)), "guide-box")
+y_label = textGrob("Citric Acid [g/dm³]", rot = 90, vjust = 0.5)
+main_title = textGrob("Volatile Acidity vs Citric Acid with Outliers Handling", 
+                      gp = gpar(fontface = "bold", cex = 1.2)) 
+grid.arrange(
+  main_title,
+  arrangeGrob(
+  y_label,
+  arrangeGrob(
+  p1 + theme(legend.position="none"), 
+  p2 + theme(legend.position="none"),
+  nrow = 1),
+  legend,
+  widths=unit.c(unit(2, "lines"), unit(1, "npc") - unit(1, "lines") - legend$width, legend$width),
+  nrow = 1),
+  nrow=2, heights=unit.c(unit(2, "line"), unit(1, "npc") - unit(3, "line")))
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, volatile_acidity_vs_citric_acid_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color), summarise, 
+      corr = cor.test(volatile.acidity, citric.acid)$estimate)
+
+corr_ql <- ddply(wine_data_no_quality_level, .(color), summarise, 
+      corr = cor.test(volatile.acidity, citric.acid)$estimate)
+
+report_corr_info(corr_c, corr_ql)
+```
+
+After the outliers handling, the correlation of red wine becomes much stronger, although it was strong relation of the original data set. That means the outliers affect the correlation between volatile acidity and citric acid quite much. On the other hand, the correlation of white wine does not change too much. But the data set become much cleaner. And the shape of the distribution of scatter points of white wine becomes like a oval, and it become more narrow and steep for red wine.
+
+***
+
+#### Fixed Acidity vs Citric Acid
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_vs_citric_acid}
+plot_scatter_with_regression_line(wine_data, 
+                                       "fixed.acidity", "citric.acid", "color") +
+  coord_cartesian(xlim=c(min(wine_data$fixed.acidity),16), 
+                    ylim=c(min(wine_data$citric.acid), 1.0)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Fixed Acidity [g/dm³]") + ylab("Citric Acid [g/dm³]") +
+  ggtitle("Fixed Acidity vs Citric Acid")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_vs_citric_acid_corr_info}
+ddply(wine_data, .(color), summarise, 
+      corr = cor.test(fixed.acidity, citric.acid)$estimate)
+```
+
+In this plot, the correlation coefficient, 0.67, of red wine indicates that the relation between fixed acidity and citric acid is strong relation, although the scatter point of red wine looks like divergent. On the other hand, the correlation coefficient, 0.29, of white wine is a litttle bit weak, and the data of white wine concnetrates on the range 5 to 9 g/dm³.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_vs_citric_acid_outlier}
+p1 <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "fixed.acidity", "citric.acid", "color") +
+  coord_cartesian(xlim=c(min(wine_data$fixed.acidity),16), 
+                    ylim=c(min(wine_data$citric.acid), 1.0)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Fixed Acidity [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+p2 <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "fixed.acidity", "citric.acid", "color") +
+  coord_cartesian(xlim=c(min(wine_data$fixed.acidity),16), 
+                    ylim=c(min(wine_data$citric.acid), 1.0)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Fixed Acidity [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Quality Level and Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+legend = gtable_filter(ggplot_gtable(ggplot_build(p1)), "guide-box")
+y_label = textGrob("Citric Acid [g/dm³]", rot = 90, vjust = 0.5)
+main_title = textGrob("Fixed Acidity vs Citric Acid with Outliers Handling", 
+                      gp = gpar(fontface = "bold", cex = 1.2)) 
+grid.arrange(
+  main_title,
+  arrangeGrob(
+  y_label,
+  arrangeGrob(
+  p1 + theme(legend.position="none"), 
+  p2 + theme(legend.position="none"),
+  nrow = 1),
+  legend,
+  widths=unit.c(unit(2, "lines"), unit(1, "npc") - unit(1, "lines") - legend$width, legend$width),
+  nrow = 1),
+  nrow=2, heights=unit.c(unit(2, "line"), unit(1, "npc") - unit(3, "line")))
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_vs_citric_acid_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color), summarise, 
+      corr = cor.test(fixed.acidity, citric.acid)$estimate)
+
+corr_ql <- ddply(wine_data_no_quality_level, .(color), summarise, 
+      corr = cor.test(fixed.acidity, citric.acid)$estimate)
+
+report_corr_info(corr_c, corr_ql)
+```
+
+After the outliers handling, we can see that lots of outliers have been removed. But it seems that outliers did not affect the correlation much because the correlation coefficient is almost the same before and after the outliers handling.
+
+***
+
+### Others
+
+#### Residual Sugar vs Alcohol
+```{r echo=FALSE, message=FALSE, warning=FALSE, residual_sugar_vs_alcohol}
+plot_scatter_with_regression_line(wine_data, 
+                                       "residual.sugar", "alcohol", "color") +
+  xlim(c(min(wine_data$residual.sugar),25)) + 
+  ylim(c(min(wine_data$alcohol), 15)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Residual Sugar [g/dm³]") + ylab("Alcohol [%(Volumn)]") +
+  ggtitle("Residual Sugar vs Alcohol")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, residual_sugar_vs_alcohol_corr_info}
+ddply(wine_data, .(color), summarise, 
+      corr = cor.test(residual.sugar, alcohol)$estimate)
+```
+
+As we can see, the scatter point distribution of red wine concentrates on the left side. No matter what alcohol content is the residual sugar just chage slightly. It is consistent with the correlation coefficient which is almost 0. On the other hand, the scatter point distribution of white wine is much wider, andd the shape is like a triangle. alcohol tends to decrease with increasing residual sugar. Although the correlation coefficient is not so strong, we still observe that it is surely that the relationship between alcohol and residual sugar of whtie wine is negative correlation.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, residual_sugar_vs_alcohol_outlier}
+p1 <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "residual.sugar", "alcohol", "color") +
+  xlim(c(min(wine_data$residual.sugar),25)) + 
+  ylim(c(min(wine_data$alcohol), 15)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Residual Sugar [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+p2 <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "residual.sugar", "alcohol", "color") +
+  xlim(c(min(wine_data$residual.sugar),25)) + 
+  ylim(c(min(wine_data$alcohol), 15)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Residual Sugar [g/dm³]") + theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Quality Level and Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+legend = gtable_filter(ggplot_gtable(ggplot_build(p1)), "guide-box")
+y_label = textGrob("Alcohol [%(Volume)]", rot = 90, vjust = 0.5)
+main_title = textGrob("Residual Sugar vs Alcohol with Outliers Handling", 
+                      gp = gpar(fontface = "bold", cex = 1.2)) 
+grid.arrange(
+  main_title,
+  arrangeGrob(
+  y_label,
+  arrangeGrob(
+  p1 + theme(legend.position="none"), 
+  p2 + theme(legend.position="none"),
+  nrow = 1),
+  legend,
+  widths=unit.c(unit(2, "lines"), unit(1, "npc") - unit(1, "lines") - legend$width, legend$width),
+  nrow = 1),
+  nrow=2, heights=unit.c(unit(2, "line"), unit(1, "npc") - unit(3, "line")))
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, residual_sugar_vs_alcohol_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color), summarise, 
+      corr = cor.test(residual.sugar, alcohol)$estimate)
+
+corr_ql <- ddply(wine_data_no_quality_level, .(color), summarise, 
+      corr = cor.test(residual.sugar, alcohol)$estimate)
+
+report_corr_info(corr_c, corr_ql)
+```
+
+In this plots, we can see that the distribution of red wine becomes very narrow, means that there were lots of outliers in the data and it is turely that there is no relation between alcohol and residual sugar in red wine, although the regression line look quite steep. However, the distribution of scatter points of white wine does not change. Only few outliers have been removed. That means alcohol content and reisdual sugar do affect each other.
+
+***
+
+#### Total Sulfur Dioxide vs Free Sulfur Dioxide
+```{r echo=FALSE, message=FALSE, warning=FALSE, total_sulfur_dioxide_vs_free_sulfur_dioxide}
+plot_scatter_with_regression_line(wine_data, 
+        "total.sulfur.dioxide", "free.sulfur.dioxide", "color") +
+  xlim(c(min(wine_data$total.sulfur.dioxide),250)) + 
+  ylim(c(min(wine_data$free.sulfur.dioxide), 100)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Total Sulfur Dioxide [mg/dm³]") + ylab("Free Sulfur Dioxide [mg/dm³]") +
+  ggtitle("Total Sulfur Dioxide vs Free Sulfur Dioxide")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, total_sulfur_dioxide_vs_free_sulfur_dioxide_corr_info}
+ddply(wine_data, .(color), summarise, 
+      corr = cor.test(total.sulfur.dioxide, 
+                      free.sulfur.dioxide)$estimate)
+```
+
+To picked up this correlation is because the correlation coefficients, 0.67 and 0.62 respecitvely, of both red wine and white red are quite strong. As what I expected, the scatter points of both red wine and white wine show that total sulfur dioxide tends to increase with increasing free sulfur dioxide, although the data of both red wine and white wine become divergent on the upper right side. And the most data of white wine are obviously greater than that of red wine. 
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, total_sulfur_dioxide_vs_free_sulfur_dioxide_outlier}
+p1 <- plot_scatter_with_regression_line(wine_data_no_color, 
+        "total.sulfur.dioxide", "free.sulfur.dioxide", "color") +
+  xlim(c(min(wine_data$total.sulfur.dioxide),250)) + 
+  ylim(c(min(wine_data$free.sulfur.dioxide), 100)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Total Sulfur Dioxide [mg/dm³]") + 
+  theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+p2 <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+        "total.sulfur.dioxide", "free.sulfur.dioxide", "color") +
+  xlim(c(min(wine_data$total.sulfur.dioxide),250)) + 
+  ylim(c(min(wine_data$free.sulfur.dioxide), 100)) +
+  scale_fill_manual(values=colours_wine) +
+  scale_color_manual(values=colours_wine) +
+  xlab("Total Sulfur Dioxide [mg/dm³]") + 
+  theme(axis.title.y = element_blank()) +
+  ggtitle("Grouped by Quality Level and Wine's Color") +
+  theme(plot.title = element_text(size=10))
+
+legend = gtable_filter(ggplot_gtable(ggplot_build(p1)), "guide-box")
+y_label = textGrob("Free Sulfur Dioxide [mg/dm³]", rot = 90, vjust = 0.5)
+main_title = textGrob("Total Sulfur Dioxide vs Free Sulfur Dioxide with Outliers Handling", 
+                      gp = gpar(fontface = "bold", cex = 1.2)) 
+grid.arrange(
+  main_title,
+  arrangeGrob(
+  y_label,
+  arrangeGrob(
+  p1 + theme(legend.position="none"), 
+  p2 + theme(legend.position="none"),
+  nrow = 1),
+  legend,
+  widths=unit.c(unit(2, "lines"), unit(1, "npc") - unit(1, "lines") - legend$width, legend$width),
+  nrow = 1),
+  nrow=2, heights=unit.c(unit(2, "line"), unit(1, "npc") - unit(3, "line")))
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, total_sulfur_dioxide_vs_free_sulfur_dioxide_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color), summarise, 
+      corr = cor.test(total.sulfur.dioxide, free.sulfur.dioxide)$estimate)
+
+corr_ql <- ddply(wine_data_no_quality_level, .(color), summarise, 
+      corr = cor.test(total.sulfur.dioxide, free.sulfur.dioxide)$estimate)
+
+report_corr_info(corr_c, corr_ql)
+```
+
+In this plot, the correlation was quite strong and the distribution of original data also shows this tendency. The outliers handing only cleanup the data so that the distribution look more clear. The distribution of white wine look like a oval, but it looks like cone shape for red wine.
+
+***
+
+### The Summary of the relationships I Picked Up
+                                                        Red     (±)   /   White   (±)
+    ------------------------------------------------------------------------------------
+    Density               vs    Alcohol                 strong  (-)   /   strong  (-)
+    Density               vs    Fixed Acidity           strong  (+)   /   weak    (+)
+    Density               vs    Residual Sugar          weak    (+)   /   strong  (+)
+
+    =================================================================================
+    Density               vs    Total Sulfur Dioxide    no      ( )   /   weak    (+) <- without outliers handling
+    Density               vs    Total Sulfur Dioxide    weak    ( )   /   strong  (+) <- with outliers handling
+    =================================================================================
+
+    Citric Acid           vs    pH                      strong  (-)   /   weak    (-)
+    Volatile Acidity      vs    pH                      weak    (+)   /   no      ( )
+    Fixed Acidity         vs    pH                      strong  (-)   /   medium  (-)
+    Volatile Acidity      vs    Citric Acid             strong  (-)   /   weak    (-)
+    Fixed Acidity         vs    Citric Acid             strong  (+)   /   medium  (+)
+    Residual Sugar        vs    Alcohol                 no      ( )   /   medium  (-)
+    Total Sulfur Dioxide  vs    Free Sulfur Dioxide     strong  (+)   /   strong  (+)
+
+After the outliers handing, most correlation does not change except the data set of density and total sulfur dioxide, which becomes much stronger correlation from weak or even no relation.
+
+***
+
+## Bivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the investigation. How did the feature(s) of interest vary with other features in the dataset?
+
+The feature of interest is quality in this report. According to the correlation plot, it is strong relation between quality and alcohol in both red wine and white wine. But the other relations are thought as the weak relations in both red wine and white wine. The interesting things is that the acditiy especially fixed acidity shows the different behaviors between red wine and white wine.
+
+<br>
+
+### Did you observe any interesting relationships between the other features (not the main feature(s) of interest)?
+
+I found acditiy and residual sugar have the different influence on density between red wine and white wine. According to the analysis, acditiy especially for fixed acidity has greater influence on density in red wine. On the other hand, residual sugar has greater infleunce on density in white wine.
+
+Considering that quality and alcohol have strongest relation and that density and alcohol have very strong relation. Acidity might be the secondary fact of quality of red wine to be considered and residual sugar might be the secondary fact of quality of white wine to be considered.
+
+Furthermore, the analysis of volatile acidity shows an interesting results. acidity is usually thought to contribute to decreasing pH. However, increasing volatile acidity in red wein contribute to increasing pH.
+
+After the outliers handling, most correlation between each feature do not change or just change a little bit. But overall tendencies are as the same as the original one. They just become much more clear for their shape of the distribution of scatter points. And as the aspect of the different color, it almost makes no differnece between the data sets grouped by color and by quality level (including color). However, I found an interesting case that the correlation between density and total sulfur dioxide become much stronger relation from weak one or even no relation. That means, amoung lots combination of features, I found that the outliers do affect the relation between total sulfur dioxide afftects density. And with the clean data, the relation between density and total sulfur dioxide is much stronger than what we thought due to the resultes of original data.
+
+<br>
+
+### What was the strongest relationship you found?
+#### Before outliers handling: 
+
+In red wine, the strongest relationship is between pH and fixed acidity. The correlation coefficient is -0.683 On the other hand, the strongest relationship is between density and residual sugar. The correlation coefficient is 0.839.
+
+#### After outliers handling: 
+
+In red wine, the strongest relationship is between pH and fixed acidity. The correlation coefficient is -0.673 On the other hand, the strongest relationship is between density and residual sugar. The correlation coefficient is 0.843.
+
+***
+***
+
+## Multivariate Plots Section
+### Exploring Wine Parameters with Quality Level
+#### Density vs Alcohol 
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_alcohol_qulaity_level}
+p <- plot_scatter_with_regression_line(wine_data, 
+                                       "density", "alcohol", "quality_level") 
+p + coord_cartesian(xlim=c(min(wine_data$density),1.005), ylim=c(8, 15)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Density [g/dm³]") + ylab("Alcohol [g/dm³]") +
+  ggtitle("Density vs Alcohol with Quality Level")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_alcohol_qulaity_level_corr_info}
+ddply(wine_data, .(color, quality_level), summarise, 
+      corr = cor.test(density, alcohol)$estimate)
+```
+
+In this plot, we can see that the tneds of realtionships between density and alcohol are similar between red wine and white wine. Bacially, the stonger relationships with the higher quality level, especially for white wine at high quality level, the correlation coefficient of that is -0.84.
+And the overall tends also indicates that the relationships of white wine are stronger than that of red wine.
+
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_alcohol_qulaity_level_outlier}
+
+p <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "density", "alcohol", "quality_level") 
+p + coord_cartesian(xlim=c(min(wine_data$density),1.005), ylim=c(8, 15)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Density [g/dm³]") + ylab("Alcohol [g/dm³]") +
+  ggtitle("Grouped by Wine's Color")
+
+p <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "density", "alcohol", "quality_level") 
+p + coord_cartesian(xlim=c(min(wine_data$density),1.005), ylim=c(8, 15)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Density [g/dm³]") + ylab("Alcohol [g/dm³]") +
+  ggtitle("Grouped by Quality Level and Wine's Color")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_alcohol_qulaity_level_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color, quality_level), summarise, 
+      corr = cor.test(density, alcohol)$estimate)
+corr_ql <- ddply(wine_data_no_quality_level, .(color, quality_level), summarise, 
+      corr = cor.test(density, alcohol)$estimate)
+report_corr_info_ql(corr_c, corr_ql)
+
+```
+
+After outliers handling, the distribution of the scatter points of two data sets (different grouping ways) look similar. However, we can find out that the tendencies of white wine are different when we focuse on the correlation coefficient. In the result of the data grouped by wine's color, the higher the quality level is the stronger the correlation coefficient is. On the other hand, in the result of the data grouped by quality level and wine's color, the correlation coefficient of medium quality level is higher than that of high quality level.
+
+***
+
+#### Density vs Residual Sugar 
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_residual_sugar_qulaity_level}
+p <- plot_scatter_with_regression_line(wine_data, 
+                                       "density", "residual.sugar", "quality_level")
+p + scale_x_continuous(breaks = seq(0.985,1.005, 0.005), 
+                       lim = c(0.985,1.005)) +
+  scale_y_continuous(breaks = seq(0, 20, 2.5), 
+                     lim = c(0, 20)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Density [g/dm³]") + ylab("Residual Sugar [g/dm³]") +
+  ggtitle("Density vs Residual Sugar with Quality Level")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_residual_sugar_level_corr_info}
+ddply(wine_data, .(color, quality_level), summarise, 
+      corr = cor.test(density, residual.sugar)$estimate)
+```
+
+We can see that residual sugar has high relationship with density in white wine. On the other hand, the relationships between residual sugar and density are relaively weak in red wine. Besides, the scatter points of red wine concentrates on the range 1.25 to 2.5 g/dm³, but the scatter points of white wine in the range 1.25 to 20 g/dm³. When we focuses on the plot of white wine, the correlation cofficient is getting lower slightly with increasing quality level.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_residual_sugar_level_outlier}
+
+p <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "density", "residual.sugar", "quality_level")
+p + scale_x_continuous(breaks = seq(0.985,1.005, 0.005), 
+                       lim = c(0.985,1.005)) +
+  scale_y_continuous(breaks = seq(0, 20, 2.5), 
+                     lim = c(0, 20)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Density [g/dm³]") + ylab("Residual Sugar [g/dm³]") +
+  ggtitle("Grouped by Wine's Color")
+
+p <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "density", "residual.sugar", "quality_level")
+p + scale_x_continuous(breaks = seq(0.985,1.005, 0.005), 
+                       lim = c(0.985,1.005)) +
+  scale_y_continuous(breaks = seq(0, 20, 2.5), 
+                     lim = c(0, 20)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Density [g/dm³]") + ylab("Residual Sugar [g/dm³]") +
+  ggtitle("Grouped by Quality Level and Wine's Color")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_residual_sugar_level_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color, quality_level), summarise, 
+      corr = cor.test(density, residual.sugar)$estimate)
+corr_ql <- ddply(wine_data_no_quality_level, .(color, quality_level), summarise, 
+      corr = cor.test(density, residual.sugar)$estimate)
+report_corr_info_ql(corr_c, corr_ql)
+
+```
+
+After the outliers handling, the distributions of scatter points of red wine in both data set become very small. But the distributions of white wine do not change too much. When we focuse on the correlation coefficient, the results of red wine do not chage too much. On the other hand, the results of the data grouped by wine's color are almost as the same as the reuslt of original data. However, the correlation coefficint decrease dramatically with increasing quality level of the data grouped by quality level and wine's color. It shows that the relation between residual sugar and density is not so stong as what I though at high quality level.
+
+***
+
+#### Residual Sugar vs Alcohol 
+```{r echo=FALSE, message=FALSE, warning=FALSE, residual_sugar_alcohol_quality_level}
+p <- plot_scatter_with_regression_line(wine_data, 
+                                       "residual.sugar", "alcohol", "quality_level")
+p + coord_cartesian(xlim=c(min(wine_data$residual.sugar),20), 
+                    ylim=c(8, 15)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Residaul Sugar [g/dm³]") + ylab("Alcohol [g/dm³]") +
+  ggtitle("Residual Sugar and Alcohol with Quality Level")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, residual_sugar_alcohol_qulaity_level_corr_info}
+ddply(wine_data, .(color, quality_level), summarise, 
+      corr = cor.test(residual.sugar, alcohol)$estimate)
+```
+
+As what we know that alcohol is generated by the fermentation of the sugar (<a href="https://en.wikipedia.org/wiki/Sugars_in_wine">wikipedia</a>). Additionally, the relationship between density and alcohol and the one between density and residual sugar. I found that density has high relationship with residual sugar in white wine. Therefore, I would like to take a look at the relationship between alcohol and residual sugar. As what we see, it can be thought that the realtionships are quite weak in red wine. The correlation coefficient at all quality level are almost 0. On the other hand, the relationships are medium, which are -0.43, -0.45 and -0.48 at each quality level respectively, in white wine. In my opinion, it might imply that the fermentation of red wine is almost done so that the content of residaul sugar affect the qualtiy very slightly. However, the degree of the fermentation of white wine seems affect the quality much more.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, residual_sugar_alcohol_qulaity_level_outlier}
+p <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "residual.sugar", "alcohol", "quality_level")
+p + coord_cartesian(xlim=c(min(wine_data_no_color$residual.sugar),30), 
+                    ylim=c(8, 15)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Residaul Sugar [g/dm³]") + ylab("Alcohol [g/dm³]") +
+  ggtitle("Grouped by Wine's Color")
+
+p <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "residual.sugar", "alcohol", "quality_level")
+p + coord_cartesian(xlim=c(min(wine_data$residual.sugar),20), 
+                    ylim=c(8, 15)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Residaul Sugar [g/dm³]") + ylab("Alcohol [g/dm³]") +
+  ggtitle("Grouped by Quality Level and Wine's Color")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, residual_sugar_alcohol_qulaity_level_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color, quality_level), summarise, 
+      corr = cor.test(residual.sugar, alcohol)$estimate)
+corr_ql <- ddply(wine_data_no_quality_level, .(color, quality_level), summarise, 
+      corr = cor.test(residual.sugar, alcohol)$estimate)
+report_corr_info_ql(corr_c, corr_ql)
+```
+
+After the outliers handling, the distribution of the scatter points of red wine become very narrow. And the correlation coefficients also do not change. Namely, there is no relation between alcohol and residual sugar for red wine. On the other hand, the results of different grouping ways are qutie different. The result of the data grouped by wine's color shows that outliers handing strengthen the relation between alcohol and residual sugar in white win, especially for that the correlation is getting strong with increasing quality level. However, the result of the data grouped by quality level and wine's color shows the opposite information. The relation increase with increasing quality level from low level to medium level, and then it decreases dramatically with increasing quality level from medium level to high level. It indicates that it is weak or even no relation between alcohol and residual sugar in white wine at high quality level. Thal also implies that the fermentation is almost done for white wine at high quality level.
+
+***
+
+#### Density vs Fixed Acidity 
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_fixed_acidity_quality_level}
+p <- plot_scatter_with_regression_line(wine_data, 
+                                       "density", "fixed.acidity", "quality_level") 
+p + coord_cartesian(xlim=c(min(wine_data$density),1.005), 
+                    ylim=c(min(wine_data$fixed.acidity),16)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Density [g/dm³]") + ylab("Fixed Acidity [g/dm³]") +
+  ggtitle("Density and Fixed Acidity with Quality Level")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_fixed_acidity_qulaity_level_corr_info}
+ddply(wine_data, .(color, quality_level), summarise, 
+      corr = cor.test(density, fixed.acidity)$estimate)
+```
+
+In contrast to the relationship between density and residual sugar, the relationships between fixed acidity and density in red wine are strong at all quality level. Similarly, the scatter points of red wine also shows that fixed acidity tends to increase with increasing density. On the oter hand, the relationships in white wine are quite weak. The scatter points of white wine shows that there is almost no relationships between fixed acidity and density.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_fixed_acidity_qulaity_level_outlier}
+p <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "density", "fixed.acidity", "quality_level") 
+p + coord_cartesian(xlim=c(min(wine_data$density),1.005), 
+                    ylim=c(min(wine_data$fixed.acidity),16)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Density [g/dm³]") + ylab("Fixed Acidity [g/dm³]") +
+  ggtitle("Grouped by Wine's Color")
+
+p <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "density", "fixed.acidity", "quality_level") 
+p + coord_cartesian(xlim=c(min(wine_data$density),1.005), 
+                    ylim=c(min(wine_data$fixed.acidity),16)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Density [g/dm³]") + ylab("Fixed Acidity [g/dm³]") +
+  ggtitle("Grouped by Quality Level and Wine's Color")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_fixed_acidity_qulaity_level_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color, quality_level), summarise, 
+      corr = cor.test(density, fixed.acidity)$estimate)
+corr_ql <- ddply(wine_data_no_quality_level, .(color, quality_level), summarise, 
+      corr = cor.test(density, fixed.acidity)$estimate)
+report_corr_info_ql(corr_c, corr_ql)
+```
+
+After outliers handling, all the distribution of scatter points of both red wine and white wine become much smaller. the shapes of distribution of red wine look like oval a little bit. On the other hand, the shope of white wine become quite round. The informaiton of correlation coefficient let us know that removing outliers of data of red wine make the retion a little bit weak. But it make no difference to the data of white wine.
+
+***
+
+#### Density vs Citric Acid 
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_citric_acid_quality_level}
+p <- plot_scatter_with_regression_line(wine_data, 
+                                       "density", "citric.acid", "quality_level")
+p + scale_x_continuous(breaks = seq(0.985,1.005, 0.005), 
+                       lim = c(0.985,1.005)) +
+  scale_y_continuous(breaks = seq(min(wine_data$citric.acid),1.0, 0.125), 
+                     lim = c(min(wine_data$citric.acid),1.0)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Density [g/dm³]") + ylab("Fixed Acidity [g/dm³]") +
+  ggtitle("Density and Fixed Acidity with Quality Level")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_citric_acid_qulaity_level_corr_info}
+ddply(wine_data, .(color, quality_level), summarise, 
+      corr = cor.test(density, citric.acid)$estimate)
+```
+
+It is reasonable that this plot is similar to that of the relationship between density and fixed acidity, because citric acid is one of major acidity in fixed acid (<a href="http://waterhouse.ucdavis.edu/whats-in-wine/fixed-acidity">Fixed Acidity</a>). However, fixed acitiy  contains other acid such as tartaric, malic, and succinic acid. So this relationships are weaker that the relationships between density and fixed acidity.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_citric_acid_quality_level_outlier}
+p <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "density", "citric.acid", "quality_level")
+p + scale_x_continuous(breaks = seq(0.985,1.005, 0.005), 
+                       lim = c(0.985,1.005)) +
+  scale_y_continuous(breaks = seq(min(wine_data$citric.acid),1.0, 0.125), 
+                     lim = c(min(wine_data$citric.acid),1.0)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Density [g/dm³]") + ylab("Fixed Acidity [g/dm³]") +
+  ggtitle("Grouped by Wine's Color")
+
+p <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "density", "citric.acid", "quality_level")
+p + scale_x_continuous(breaks = seq(0.985,1.005, 0.005), 
+                       lim = c(0.985,1.005)) +
+  scale_y_continuous(breaks = seq(min(wine_data$citric.acid),1.0, 0.125), 
+                     lim = c(min(wine_data$citric.acid),1.0)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Density [g/dm³]") + ylab("Fixed Acidity [g/dm³]") +
+  ggtitle("Grouped by Quality Level and Wine's Color")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, density_citric_acid_quality_level_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color, quality_level), summarise, 
+      corr = cor.test(density, citric.acid)$estimate)
+corr_ql <- ddply(wine_data_no_quality_level, .(color, quality_level), summarise, 
+      corr = cor.test(density, citric.acid)$estimate)
+report_corr_info_ql(corr_c, corr_ql)
+```
+
+The results of the outliers handling here are almost as the same as the previous results (density vs fixed acidity).
+
+***
+
+#### Fixed Acidity vs Citric Acid 
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_citric_acid_quality_level}
+p <- plot_scatter_with_regression_line(wine_data, 
+                                       "fixed.acidity", "citric.acid", "quality_level")
+p +  scale_x_continuous(breaks = seq(min(wine_data$fixed.acidity),16, 4), 
+                       lim = c(min(wine_data$fixed.acidity),16)) +
+  scale_y_continuous(breaks = seq(min(wine_data$citric.acid),1.0, 0.25), 
+                     lim = c(min(wine_data$citric.acid),1.0)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Fixed Acidity [g/dm³]") + ylab("Citric Acid [g/dm³]") +
+  ggtitle("Fixed Acidity and Citric Acid with Quality Level")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_citric_acidity_qulaity_level_corr_info}
+ddply(wine_data, .(color, quality_level), summarise, 
+      corr = cor.test(fixed.acidity, citric.acid)$estimate)
+```
+
+In this plot, it shows that citric acid tends to increase with increasing fixed acidity in both red wine and white wine. The difference is that the higher the quality of red wine is the stronger the relationship is. On the other hand, it does not show this phenomenon in white wine. Besides, the higher quality level has the higher correlation coefficient in red wine. But it is in contrast in white wine.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_citric_acid_quality_level_outlier}
+p <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "fixed.acidity", "citric.acid", "quality_level")
+p +  scale_x_continuous(breaks = seq(min(wine_data$fixed.acidity),16, 4), 
+                       lim = c(min(wine_data$fixed.acidity),16)) +
+  scale_y_continuous(breaks = seq(min(wine_data$citric.acid),1.0, 0.25), 
+                     lim = c(min(wine_data$citric.acid),1.0)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Fixed Acidity [g/dm³]") + ylab("Citric Acid [g/dm³]") +
+  ggtitle("Grouped by Wine's Color")
+
+p <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "fixed.acidity", "citric.acid", "quality_level") 
+p + scale_x_continuous(breaks = seq(min(wine_data$fixed.acidity),16, 4), 
+                       lim = c(min(wine_data$fixed.acidity),16)) +
+  scale_y_continuous(breaks = seq(min(wine_data$citric.acid),1.0, 0.25), 
+                     lim = c(min(wine_data$citric.acid),1.0)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Fixed Acidity [g/dm³]") + ylab("Citric Acid [g/dm³]") +
+  ggtitle("Grouped by Quality Level and Wine's Color")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, fixed_acidity_citric_acid_quality_level_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color, quality_level), summarise, 
+      corr = cor.test(fixed.acidity, citric.acid)$estimate)
+corr_ql <- ddply(wine_data_no_quality_level, .(color, quality_level), summarise, 
+      corr = cor.test(fixed.acidity, citric.acid)$estimate)
+report_corr_info_ql(corr_c, corr_ql)
+```
+
+Similarly, the results of outliers handling here are almost as the same as the previous results. But it is a little bit different in the distribution of the scatter points between the one gourped by wine's color and the one grouped by quality level and wine's color. We can see that the distribution of that grouped by wine's color are smaller.
+
+***
+
+#### Citric Acid vs Volatile Acidity 
+```{r echo=FALSE, message=FALSE, warning=FALSE, citric_acid_volatile_acidity_quality_level}
+p <- plot_scatter_with_regression_line(wine_data, 
+                                       "citric.acid", "volatile.acidity", "quality_level") 
+p + coord_cartesian(xlim=c(min(wine_data$citric.acid),1.0), 
+                    ylim=c(min(wine_data$volatile.acidity),1.2)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Volatile Acidity [g/dm³]") + ylab("Citric Acid [g/dm³]") +
+  ggtitle("Volatile Acidity and Citric Acid with Quality Level")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, citric_acid_volatile_acidity_quality_level_corr_info}
+ddply(wine_data, .(color, quality_level), summarise, 
+      corr = cor.test(volatile.acidity, citric.acid)$estimate)
+```
+
+As <a href="https://en.wikipedia.org/wiki/Acids_in_wine#Citric_acid">wikipedia</a> says that citric acid would eventually be converted into acetic acid which is the main compound in volatile acidity. Thus, as what we can see in this plot, citric acid tends to decrease with increasing volatile acidity in red wine. However, there is no such tendency in white wine. In my opinion, it might be that the primary alcohol fermentation should be almost done in red wine due to the tendency of yeast to convert citric into acetic acid.
+
+#### Outliers Handling
+```{r echo=FALSE, message=FALSE, warning=FALSE, citric_acid_volatile_acidity_quality_level_outlier}
+p <- plot_scatter_with_regression_line(wine_data_no_color, 
+                                       "citric.acid", "volatile.acidity", "quality_level") 
+p + coord_cartesian(xlim=c(min(wine_data$citric.acid),1.0), 
+                    ylim=c(min(wine_data$volatile.acidity),1.2)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Volatile Acidity [g/dm³]") + ylab("Citric Acid [g/dm³]") +
+  ggtitle("Grouped by Wine's Color")
+
+p <- plot_scatter_with_regression_line(wine_data_no_quality_level, 
+                                       "citric.acid", "volatile.acidity", "quality_level") 
+p + coord_cartesian(xlim=c(min(wine_data$citric.acid),1.0), 
+                    ylim=c(min(wine_data$volatile.acidity),1.2)) +
+  scale_fill_manual(values=colours_quality) +
+  scale_color_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Volatile Acidity [g/dm³]") + ylab("Citric Acid [g/dm³]") +
+  ggtitle("Grouped by Quality Level and Wine's Color")
+```
+
+#### Correlation Coefficient Information
+```{r echo=FALSE, message=FALSE, warning=FALSE, citric_acid_volatile_acidity_quality_level_outlier_corr_info}
+corr_c <- ddply(wine_data_no_color, .(color, quality_level), summarise, 
+      corr = cor.test(citric.acid, volatile.acidity)$estimate)
+corr_ql <- ddply(wine_data_no_quality_level, .(color, quality_level), summarise, 
+      corr = cor.test(citric.acid, volatile.acidity)$estimate)
+report_corr_info_ql(corr_c, corr_ql)
+```
+
+Outliers handling make the distribution of scatter points of white wine quite round and small, but the correlation coefficients do not change too much. It implies that the outliers do not affect the relation so much. On the other hand, we can find out that the results are quite different in red wine between the one grouped by wine's color and the one grouped by quality level and wine's color. In the result of the one grouped by wine's color, the relation at all the quality level are strengthened by removing the outliers. However, the change of the relation of the one grouped by quality level and wine's color is so different It increases with increaing quality level from low level to medium level, and then it decreases to the value as 1/2 as that at medium quality level.
+
+***
+
+### Investigate the Quantity of Wine Parameters with Quality Level
+
+In this section, the plot with outliers handling just used to compare with the plot without outliers handling. Bascially, the box plots with outliers handling just make the tendency more clear. There is no much change in all the plots.
+
+#### Quality vs Alcohol
+```{r echo=FALSE, message=FALSE, warning=FALSE, boxplot_quality_vs_alcohol}
+ggplot(data = wine_data, aes(x = as.factor(quality), 
+                             y = alcohol, fill = quality_level)) +
+  scale_fill_manual(values=colours_quality) +
+  geom_boxplot(alpha=0.4) +
+  facet_wrap(~ color) +
+  xlab("Quality [-]") + ylab("Alcohol [g/dm³]") +
+  ggtitle("Boxplot of Quality vs Alcohol with Quality Level")
+
+ddply(wine_data, .(color, quality_level), function(x) summary(x$alcohol))
+
+ggplot(data = wine_data_no_quality, aes(x = as.factor(quality), 
+                             y = alcohol, fill = quality_level)) +
+  scale_fill_manual(values=colours_quality) +
+  geom_boxplot(alpha=0.4) +
+  facet_wrap(~ color) +
+  xlab("Quality [-]") + ylab("Alcohol [g/dm³]") +
+  ggtitle("with Outliers Handling Grouped by Quality")
+
+ddply(wine_data_no_quality, .(color, quality_level), function(x) summary(x$alcohol))
+```
+
+The overall tendency of both red wine and white wine show that both quality increases with increasing alcohol content. If we focuse on the low quality level, it shows no relationship in red wine, and it shows that quality increases with decreasing alcohol content in white wine. On the other hand, quality increases with increasing alcoho content in both red wine and white wine at the medium and high quality level. Besides, red wine and white wine have similar alcohol content.
+
+***
+
+#### Quality vs Residual Sugar
+```{r echo=FALSE, message=FALSE, warning=FALSE, boxplot_quality_vs_residual_sugar}
+ggplot(data = wine_data, aes(x = as.factor(quality), 
+                             y = residual.sugar, fill = quality_level)) +
+  scale_fill_manual(values=colours_quality) +
+  geom_boxplot(alpha=0.4) +
+  ylim(c(min(wine_data$residual.sugar), 20)) +
+  facet_wrap(~ color) +
+  xlab('Quality [-]') + ylab('Residual Sugar [g/dm³]') +
+  ggtitle("Boxplot of Quality vs Residual Sugar with Quality Level")
+
+ddply(wine_data, .(color, quality_level), function(x) summary(x$residual.sugar))
+
+ggplot(data = wine_data_no_quality, aes(x = as.factor(quality), 
+                             y = residual.sugar, fill = quality_level)) +
+  scale_fill_manual(values=colours_quality) +
+  geom_boxplot(alpha=0.4) +
+  ylim(c(min(wine_data$residual.sugar), 20)) +
+  facet_wrap(~ color) +
+  xlab('Quality [-]') + ylab('Residual Sugar [g/dm³]') +
+  ggtitle("with Outliers Handling Grouped by Quality")
+
+ddply(wine_data_no_quality, .(color, quality_level), function(x) summary(x$residual.sugar))
+
+```
+
+It is obviously that white wine has much more residual sugar than red wine.
+
+***
+
+#### Quality vs Total Acidity
+```{r echo=FALSE, message=FALSE, warning=FALSE, boxplot_quality_vs_total_acidity}
+
+ggplot(data = wine_data, aes(x = as.factor(quality), 
+                             y = total.acidity, fill = quality_level)) +
+  scale_fill_manual(values=colours_quality) +
+  geom_boxplot(alpha=0.4) +
+  ylim(c(min(wine_data$total.acidity), 20)) +
+  facet_wrap(~ color) +
+  xlab('Quality [-]') + ylab('Total Acidity [g/dm³]') +
+  ggtitle("Boxplot of Quality vs Total Acidity with Quality Level")
+
+ddply(wine_data, .(color, quality_level), function(x) summary(x$total.acidity))
+
+ggplot(data = wine_data_no_quality, aes(x = as.factor(quality), 
+                             y = total.acidity, fill = quality_level)) +
+  scale_fill_manual(values=colours_quality) +
+  geom_boxplot(alpha=0.4) +
+  ylim(c(min(wine_data$total.acidity), 20)) +
+  facet_wrap(~ color) +
+  xlab('Quality [-]') + ylab('Total Acidity [g/dm³]') +
+  ggtitle("with Outliers Handling Grouped by Quality")
+
+
+ddply(wine_data_no_quality, .(color, quality_level), function(x) summary(x$total.acidity))
+```
+
+In this plot, I crated one variable, total acidity which is calcualted by sum fixed acidity and volatile acidity. I did not count citric acid because I think that citric acid should be one compound in fixed acidity. As we can see on, it is obviously that red wine has more acidity than white wine. The interesting thing is that the acidity in white wine at high quality level concentrates on about 7.5 g/dm³.
+
+***
+
+#### Quality vs Total Surful Dioxide
+```{r echo=FALSE, message=FALSE, warning=FALSE, boxplot_quality_vs_total_sulfur_dioxide}
+ggplot(data = wine_data, aes(x = as.factor(quality), 
+                             y = total.sulfur.dioxide, fill = quality_level)) +
+  scale_fill_manual(values=colours_quality) +
+  geom_boxplot(alpha=0.4) +
+  scale_y_continuous(breaks = seq(0, 300, 20),
+                     lim = c(0, 300)) +
+  facet_wrap(~ color) +
+  xlab('Quality [-]') + ylab('Total Sulfur Dioxide [mg/dm³]') +
+  ggtitle("Boxplot of Quality vs Total Sulfur Dioxide with Quality Level")
+
+ddply(wine_data, .(color, quality_level), function(x) summary(x$total.sulfur.dioxide))
+
+ggplot(data = wine_data_no_quality, aes(x = as.factor(quality), 
+                             y = total.sulfur.dioxide, fill = quality_level)) +
+  scale_fill_manual(values=colours_quality) +
+  geom_boxplot(alpha=0.4) +
+  scale_y_continuous(breaks = seq(0, 300, 20),
+                     lim = c(0, 300)) +
+  facet_wrap(~ color) +
+  xlab('Quality [-]') + ylab('Total Sulfur Dioxide [mg/dm³]') +
+  ggtitle("with Outliers Handling Grouped by Quality")
+
+ddply(wine_data_no_quality, .(color, quality_level), function(x) summary(x$total.sulfur.dioxide))
+```
+
+According to the wine quality information document, sulfur dioxide prevents microbial growth and the oxidation of wine. As we can see, Much more sulfur dioxide is used in white wine to keep white wine's quality. Especially, the used quantity of sulfur dioxide might be controled to the range 116 to 121 mg/dm³.
+
+
+#### Quick Review of Quality vs Features Grouped by Quality Level
+```{r echo=FALSE,echo=FALSE, message=FALSE, warning=FALSE, Plot_Three_2}
+p1 <- ggplot(data = wine_data_no_quality_level, aes(x = color, 
+                                   y = residual.sugar, fill = quality_level)) +
+  geom_boxplot(alpha=0.4) +
+  scale_fill_manual(values=colours_quality) +
+  scale_y_continuous(breaks = seq(0, 20, 5),
+                     lim = c(0, 20)) +
+  xlab('Color [-]') + ylab('Residual Sugar [g/dm³]') +
+  ggtitle("Color vs Residual Sugar")
+
+p2 <- ggplot(data = wine_data_no_quality_level, aes(x = color, 
+                                   y = total.sulfur.dioxide, fill = quality_level)) +
+  geom_boxplot(alpha=0.4) +
+  scale_fill_manual(values=colours_quality) +
+  scale_y_continuous(breaks = seq(0, 300, 50),
+                     lim = c(0, 300)) +
+  xlab('Color [-]') + ylab('Total Sulfur Dioxide [mg/dm³]') +
+  ggtitle("Color vs Total Sulfur Dioxide")
+
+p3 <- ggplot(data = wine_data_no_quality_level, aes(x = color, 
+                                   y = fixed.acidity, fill = quality_level)) +
+  geom_boxplot(alpha=0.4) +
+  scale_fill_manual(values=colours_quality) +
+  scale_y_continuous(breaks = seq(0, 20, 5),
+                     lim = c(0, 20)) +
+  xlab('Color [-]') + ylab('Fixed Acidity [g/dm³]') +
+  ggtitle("Color vs Fixed Acidity")
+
+p4 <- ggplot(data = wine_data_no_quality_level, aes(x = color, 
+                                   y = volatile.acidity, fill = quality_level)) +
+  geom_boxplot(alpha=0.4) +
+  scale_fill_manual(values=colours_quality) +
+  scale_y_continuous(breaks = seq(0, 1.5, 0.1),
+                     lim = c(0, 1.5)) +
+  xlab('Color [-]') + ylab('Volatile Acidity [g/dm³]') +
+  ggtitle("Color vs Volatile Acidity")
+
+
+grid.arrange(p1, p2, p3, p4, nrow = 2, ncol = 2)
+```
+
+In the boxplot plot, it shows that white wine has higher residual sugar and total sulfur dioxide, especially for that the quantities at the high quality level have relative small range, which implies that the quantities of these feature are controlled in my poinion. On the other hand, red wine has higher acidity. The interesting thing is that the red wine with higher fixed acidity and low volatile acidity has better quality.
+
+***
+
+## Multivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the investigation. Were there features that strengthened each other in terms of looking at your feature(s) of interest?
+
+With the consideration of outliers handling, the conclusions are shown belowe. 
+
+Red wine with higher alcohol content, higher fixed acidity (citric acid) and lower volatile acidity seems have better quality.
+
+White wine with higher alcohol content and lower residual sugar at low and medium quality level, but it seems that there is weak or even no relation at high quality level. Besides,total sulfur dioxide controlled at about 120 mg/dm³ seems have better quality.
+
+
+
+### Were there any interesting or surprising interactions between features?
+
+According to the analysis of the relationships amoung alcohol, density, residual sugar and acditiy, I found out that it seems that the fermentation of red wine is almost done but the fermentation of white wine is controlled at some level, especially for those at low and medium level. When I looked at the relationship between alcohol content and residual sugar, there is no apparent relationship in red wine and strong negative relationship in white wine. However, compared with the results with outliers handling, I found that there is weak or no realtion between alcohol and residual sugar, which is quite similr to that of red wine. It might be that the fermentation is almost done for the white wine at high quality level. As what we know that alcohol is generated by the fermentation of sugar, the box plot also show that the alcohol content of white wine is highest at high quality level. Additionally, the relationship between citric acid and fixed acidity and the relationship between citric acid and volatile acidity also show similar conclusion. 
+
+***
+***
+
+## Final Plots and Summary
+
+### Plot One: Primary feature which Affect Wine Quality in Red Wine and White Wine.
+```{r echo=FALSE, message=FALSE, warning=FALSE, Plot_One}
+ggplot(data = wine_data_no_quality, aes(x = as.factor(quality), 
+                             y = alcohol, fill = quality_level)) +
+  geom_boxplot(alpha=0.4) +
+  scale_fill_manual(values=colours_quality) +
+  facet_wrap(~ color) +
+  xlab("Quality [-]") + ylab("Alcohol [g/dm³]") +
+  ggtitle("Boxplot of Quality vs Alcohol with Quality Level")
+```
+
+### Description One
+Alcohol content is the strongest relationship between a featrue and quality in both red wine and white wine. The overall tendency of both red wine and white wine show that quality increases with increasing alcohol content. However, If we focuse on the low quality level, the tnedency is not clear in red wine; and the alcohol content tends to decrease with increasing quality. On the other hand, the higher the alcohol content is the higher quality is at medium and high quality level for both red wine and white wine. Besides, after outliers handling, the higher the quality is the smaller the range of alcohol is for both red wine and white wine. However, there is no such phenomenon in red wine at low quality level.
+
+***
+
+### Plot Two: Secondary feature which Affect Wine Quality in Red Wine.
+```{r echo=FALSE, echo=FALSE, message=FALSE, warning=FALSE, Plot_Two}
+red_subset <- subset(wine_data_no_quality_level, 
+                     color == "red")[ ,c("total.acidity", "alcohol", "quality_level")]
+
+empty <- ggplot()+geom_point(aes(1,1), colour="white") +
+     theme(                              
+       plot.background = element_blank(), 
+       panel.grid.major = element_blank(), 
+       panel.grid.minor = element_blank(), 
+       panel.border = element_blank(), 
+       panel.background = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank(),
+       axis.text.x = element_blank(),
+       axis.text.y = element_blank(),
+       axis.ticks = element_blank()
+     )
+
+main <- ggplot(red_subset, aes(x = total.acidity, y = alcohol, 
+                 fill=factor(red_subset$quality_level))) + 
+  geom_point(shape=21) +
+  scale_x_continuous(breaks = seq(5, 20, 5), lim = c(0, 20)) +
+  scale_fill_manual(values=colours_quality) +
+  theme(legend.position=c(1,1),legend.justification=c(1,1)) + 
+  labs(fill="Quality", 
+       title="Influence of alcohol and total acidity 
+       content on red wine quality", 
+       y="Alcohol Content [%(volume)]", 
+       x= "Total Acidity [g/dm³]")
+
+
+top <- ggplot(red_subset, aes(x = total.acidity, 
+                 fill=as.factor(red_subset$quality_level))) + 
+  geom_density(alpha=0.5) + 
+  scale_x_continuous(breaks = seq(5, 20, 5), lim = c(0, 20)) +
+  scale_fill_manual(values=colours_quality) +
+  theme(legend.position = "none")
+
+right <- ggplot(red_subset, aes(x = alcohol, 
+                 fill=factor(red_subset$quality_level))) + 
+  coord_flip() + 
+  geom_density(alpha=0.5) + 
+  scale_fill_manual(values=colours_quality) +
+  theme(legend.position = "none")
+
+grid.arrange(top, empty, main, right, 
+             ncol=2, nrow=2, widths=c(4, 1), heights=c(1, 4))
+```
+
+### Description Two
+
+By combining a scatter plot with density plots of the x- and y-axis variables, it is easier to see that a tnedency from low to high quality level. For high quality level, it seems that total acidity and alcohol contents have a wide range. But for medium quality level, its alcohol content is also quite wide, but not total acidity. For low quality level, both alcohol content and total acidity concentrate on low range. It might be hard to distinguish the red wine at high level and medium level, but the red wine at low level has lower total acidity and alcohol content. Thus, if we focus on the scatter plot, the data of high quality level occupies a quite range, but the data of low quality level concentrates on the range at bottom. In my opinion, you probably have red wine with high quality if you feel a little sour and get drunk.
+
+***
+
+### Plot Three: Secondary feature which Affect Wine Quality in White Wine.
+```{r echo=FALSE,echo=FALSE, message=FALSE, warning=FALSE, Plot_Three_1}
+white_subset <- subset(wine_data_no_quality_level, 
+                       color == "white")[,c("residual.sugar", "alcohol", "quality_level")]
+
+empty <- ggplot()+geom_point(aes(1,1), colour="white") +
+     theme(                              
+       plot.background = element_blank(), 
+       panel.grid.major = element_blank(), 
+       panel.grid.minor = element_blank(), 
+       panel.border = element_blank(), 
+       panel.background = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank(),
+       axis.text.x = element_blank(),
+       axis.text.y = element_blank(),
+       axis.ticks = element_blank()
+     )
+
+main <- ggplot(white_subset, aes(x = residual.sugar, y = alcohol, 
+                 fill=factor(white_subset$quality_level))) + 
+  geom_point(shape=21) +
+  scale_x_continuous(breaks = seq(0, 40, 5), lim = c(0, 40)) +
+  scale_fill_manual(values=colours_quality) +
+  theme(legend.position=c(1,1),legend.justification=c(1,1)) + 
+  labs(fill="Quality", 
+       title="Influence of alcohol and residual sugar 
+       content on white wine quality", 
+       y="alcohol content [%(volume)]", 
+       x= "residual sugar [g/dm³]")
+
+
+top <- ggplot(white_subset, aes(x = residual.sugar, 
+                 fill=as.factor(white_subset$quality_level))) + 
+  geom_density(alpha=0.5) + 
+  scale_x_continuous(breaks = seq(0, 40, 5), lim = c(0, 40)) +
+  scale_fill_manual(values=colours_quality) +
+  theme(legend.position = "none")
+
+right <- ggplot(white_subset, aes(x = alcohol, 
+                 fill=factor(white_subset$quality_level))) + 
+  coord_flip() + 
+  geom_density(alpha=0.5) + 
+  scale_fill_manual(values=colours_quality) +
+  theme(legend.position = "none")
+
+grid.arrange(top, empty, main, right, 
+             ncol=2, nrow=2, widths=c(4, 1), heights=c(1, 4))
+
+```
+
+### Description Three:
+
+Actually, it is a little bit hard to observe the scatter plot. But the density plots help us to have an insight into the data. It is obvious that the data of high quality level almost locate at left upper side, and the data of medium quality level locates at the left middle part, and the data of low quality level locate at the left bottom side. According to the density plots, high quality level has lower and narrow range of residual sugar but has high and wide range of alcohol content, which means that alcohol content is almost the same with changing residual surgar. Medium quality level has wide range of both residual sugar and alcohol content, which some how alcohol change a little bit with changing residual sugar. Low quality level has wide and low range of residual sugar but narrow and low range of alcohol, and the changing of alcohol relative to reisdual sugar is similar to that of medium quality level. Recalling the plots of alcohol vs residual sugar in Multivariate section, this plot also implies the similar information, the fermentation of high quality level might be almost done so that there is no relation between alcohol and reisdual sugar, but the fermentaion of both medium quality level and low quality level might be still processing. So, it strengthens my thought again, about that the progress of fermentation might affect the quality of white wine..
+Personally, I like wine sweeter. But after this analysis, I will try to have a bitter and strong white wine at the next time.
+
+***
+***
+
+## Reflection
+
+I was thinking that it should be quite different between red wine and white wine. Thus, I decided to  explore the data of red wine and white wine at the same time. At the beginning of this project, I was struggling with how to provide a meaningful project. I decided to take a look at the individual histrogram distribution of the features to get some feel for each one. Althought the distributions of each feature are quite similar between red wine and white wine, I still found that the quantities and tendencies are quite different between red wine and white wine as whtat I thought that there must be something qutite different between red wine and white wine. Thus, I was not so suprised to the difference between red wine and whihte wine in the results distributions.
+
+In bivariate plots section and analysis, I was struggling with what kind of data exploratory I should perform. The results of ggcorr function did help me a lot. The plot of ggcorr function is convenient to observe the relationships between the features. I found that red wine and white wine have quite difference in the relationships between the features, especially residual sugar and acidity. I picked up several relationships which I am interesed to check their scatter point distrbutions. As the result, I found out that residual sugar have high influence on white wine, and acidity have high influence on red wine. 
+
+At the beginning of this report, I created a variable, quality_level, classifying the quality into the three levels, low, medium and high. This variable was used in Multivariate Plots Section to check the effect of each feature on the quality. As what I expected, the tendencies are different at differnt quality level. That strengthened my confidence to that residual sugar have high influence on white wine, and acidity have high influence on red wine.
+
+I did not investigate all the relationship between the features. However, low correlation coefficient does not mean that the corresponding features have no influence on the quality. For example, suphates is the additive which contribute to sulfur dioxide gas. It should have some influence on white wine. Besides, I found out that there are lots of outliers in different features. But I did clean the data to make the results more reliable. Additionally, I would like to know the years or vintage of each individual wine, because the years and vintage have great influence on wine's quality. These kinds of analysis of red/white wine should be interesting as the future work.
+
+According to the suggestion given by the previous reviwer, I did the analysis of outliers handling. At the beginning, I was frustrated with how to perform this analysis. As the basic knowledge I learned in first project of this nanodegree, I know IQR rule (1.5*IQR ± Q1 or Q3) is one of the way to detect outliers. According to study outliers handling, I have looked for lots of information. There are many ways like deivation, regression analysis and cook's distance to detect the outliers. Besides, I noticed that the new outliers will come out when I replace the old outliers with NA. The change of the sample numbers results in the new outliers. In order to eliminate the outliers, I did the iteration of outliers handling. Actually, I am not sure whether it is a good idea or not, because I do not have much experience of it. Also, as the information I got, some people replace the outliers with capping value, mean value or median value. The results of outliers hadling really affected by how I group the data during the process. It might not be hard to observer when the scale of group is big like using color to group. But the difference can be seen when the group is getting small like using quality level even quality to group the data. Besides, I also fund package called "outliers" and "mvoutlers" in R. But I did not use it. Because , it is my first time to do outlier handling. Althoug it took lots of my time to code the program of outliers handling, I have learned very much. Of course, I did not do refactoring of my code, I also found some of problems like the outliers would not be removed very clean. I think it is turely interesting to do the analysis which focouses on outliers handling, whcih includes refactoring of the code as the study in the future . 
+
+It was my first time to use R to do the analysis. I spent lots of time on learning the skills of R, especially for plotting. In my opinion, it is truly convenient to do data exploratory or analysis with R. It has lots of powerful functions to promote the efficiency. Besides, in order to make the explaination meaning ful, I did looked for severl information about wine, especially for sulfur dioxide, residual sugar and acidity (fixed acidity and volatile acidity).
