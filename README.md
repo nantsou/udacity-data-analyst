@@ -1,6 +1,8 @@
 # Udacity: Data Analyst Nanodegree
 
-![Certification](cert_20160913.png)
+![certificate v1](cert_20160913.png)
+
+![certificate v2](cert_20180605.png)
 
 ## Completed projects
 
